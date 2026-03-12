@@ -5,6 +5,7 @@ import os
 import sys
 import asyncio
 import time
+import traceback
 from contextlib import contextmanager
 from urllib.parse import urlencode
 import pygame
@@ -68,6 +69,7 @@ PLAYER_STATS_LOCK_TIMEOUT = 5.0
 PLAYER_STATS_LOCK_POLL_INTERVAL = 0.1
 DEFAULT_WEB_SCORE_API_PATH = "/api/flight-game-scores"
 DEFAULT_WEB_SCORE_API_PORT = "8765"
+WEB_SCORE_REQUEST_TIMEOUT = 1.5
 IS_WEB = sys.platform in ("emscripten", "wasi") or browser_window is not None
 UI_FONT_NAME = "arial" if IS_WEB else "consolas"
 
@@ -114,6 +116,38 @@ def get_player_net_score(entry):
     return entry["wins"] - entry["losses"]
 
 
+def get_browser_hostname():
+    if browser_window is None:
+        return ""
+
+    try:
+        return str(browser_window.location.hostname)
+    except Exception:
+        return ""
+
+
+def should_use_web_score_api():
+    if browser_window is None:
+        return False
+
+    try:
+        configured_url = getattr(browser_window, "FLIGHT_GAME_SCORE_API_URL", None)
+    except Exception:
+        configured_url = None
+
+    if configured_url:
+        return True
+
+    hostname = get_browser_hostname()
+    if hostname in ("localhost", "127.0.0.1"):
+        return True
+
+    if hostname.endswith(".github.io") or hostname == "github.io":
+        return False
+
+    return True
+
+
 def get_web_score_api_url():
     if browser_window is None:
         return DEFAULT_WEB_SCORE_API_PATH
@@ -131,10 +165,7 @@ def get_web_score_api_url():
     except Exception:
         origin = ""
 
-    try:
-        hostname = str(browser_window.location.hostname)
-    except Exception:
-        hostname = ""
+    hostname = get_browser_hostname()
 
     if hostname in ("localhost", "127.0.0.1"):
         return f"http://{hostname}:{DEFAULT_WEB_SCORE_API_PORT}{DEFAULT_WEB_SCORE_API_PATH}"
@@ -145,7 +176,7 @@ def get_web_score_api_url():
 
 
 async def fetch_web_score_json(endpoint="", params=None):
-    if browser_window is None:
+    if browser_window is None or not should_use_web_score_api():
         return None
 
     query_params = list(params or [])
@@ -156,7 +187,7 @@ async def fetch_web_score_json(endpoint="", params=None):
         url = f"{url}?{query_string}"
 
     try:
-        response = await browser_window.fetch(url)
+        response = await asyncio.wait_for(browser_window.fetch(url), timeout=WEB_SCORE_REQUEST_TIMEOUT)
         status_ok = bool(response.ok)
     except Exception:
         return None
@@ -165,7 +196,7 @@ async def fetch_web_score_json(endpoint="", params=None):
         return None
 
     try:
-        payload = await response.text()
+        payload = await asyncio.wait_for(response.text(), timeout=WEB_SCORE_REQUEST_TIMEOUT)
     except Exception:
         return None
 
@@ -408,6 +439,48 @@ def draw_text_centered(surface, text, text_font, color, center_x, top_y):
     return rect
 
 
+def draw_rect_compat(surface, color, rect, width=0, border_radius=0):
+    if border_radius <= 0:
+        return pygame.draw.rect(surface, color, rect, width)
+
+    try:
+        return pygame.draw.rect(surface, color, rect, width, border_radius=border_radius)
+    except TypeError:
+        return pygame.draw.rect(surface, color, rect, width)
+
+
+async def show_fatal_error_screen(error):
+    error_lines = traceback.format_exception_only(type(error), error)
+    rendered_lines = ["Flight Game failed to start."]
+    rendered_lines.extend(line.strip() for line in error_lines if line.strip())
+    rendered_lines.append("Press refresh after the issue is fixed.")
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                return
+
+        screen.fill((18, 22, 32))
+        panel_rect = pygame.Rect(80, 80, WIDTH - 160, HEIGHT - 160)
+        draw_rect_compat(screen, (238, 241, 246), panel_rect, border_radius=16)
+        draw_rect_compat(screen, (138, 28, 28), panel_rect, width=4, border_radius=16)
+
+        y = panel_rect.y + 28
+        draw_text_centered(screen, rendered_lines[0], subtitle_font, (120, 18, 18), WIDTH // 2, y)
+        y += 64
+
+        for line in rendered_lines[1:]:
+            if not line:
+                continue
+            line_image = small_font.render(line[:110], True, (38, 48, 68))
+            screen.blit(line_image, (panel_rect.x + 20, y))
+            y += line_image.get_height() + 12
+
+        pygame.display.flip()
+        await wait_for_next_frame()
+
+
 def reset_weather_state():
     return {
         "round_timer": 0.0,
@@ -497,8 +570,8 @@ def validate_player_names(input_names):
 def draw_name_entry_screen(input_names, active_index, error_message, player_stats):
     screen.fill((52, 112, 188))
     panel_rect = pygame.Rect(110, 56, WIDTH - 220, HEIGHT - 112)
-    pygame.draw.rect(screen, (234, 240, 248), panel_rect, border_radius=18)
-    pygame.draw.rect(screen, (28, 60, 98), panel_rect, 4, border_radius=18)
+    draw_rect_compat(screen, (234, 240, 248), panel_rect, border_radius=18)
+    draw_rect_compat(screen, (28, 60, 98), panel_rect, width=4, border_radius=18)
 
     title_top = panel_rect.y + 34
     subtitle_top = title_top + 64
@@ -521,8 +594,8 @@ def draw_name_entry_screen(input_names, active_index, error_message, player_stat
         field_rect = pygame.Rect(field_x, top + 48, field_width, field_height)
         field_rects.append(field_rect)
         border_color = (24, 92, 178) if active_index == index else (112, 136, 166)
-        pygame.draw.rect(screen, (255, 255, 255), field_rect, border_radius=10)
-        pygame.draw.rect(screen, border_color, field_rect, 3, border_radius=10)
+        draw_rect_compat(screen, (255, 255, 255), field_rect, border_radius=10)
+        draw_rect_compat(screen, border_color, field_rect, width=3, border_radius=10)
 
         entry_text = input_names[index] if input_names[index] else "Type a player name"
         entry_color = (30, 34, 42) if input_names[index] else (142, 148, 160)
@@ -541,8 +614,8 @@ def draw_name_entry_screen(input_names, active_index, error_message, player_stat
         screen.blit(info_image, (field_rect.x, field_rect.bottom + 8))
 
     button_rect = pygame.Rect(WIDTH // 2 - 150, panel_rect.bottom - 110, 300, 64)
-    pygame.draw.rect(screen, (24, 96, 54), button_rect, border_radius=12)
-    pygame.draw.rect(screen, (18, 64, 38), button_rect, 3, border_radius=12)
+    draw_rect_compat(screen, (24, 96, 54), button_rect, border_radius=12)
+    draw_rect_compat(screen, (18, 64, 38), button_rect, width=3, border_radius=12)
     draw_text_centered(screen, "Start Match", subtitle_font, (244, 248, 244), button_rect.centerx, button_rect.y + 12)
 
     if error_message:
@@ -623,14 +696,14 @@ async def show_top_scores_screen(player_stats, winner_name):
 
         screen.fill((34, 54, 94))
         panel_rect = pygame.Rect(190, 56, WIDTH - 380, HEIGHT - 112)
-        pygame.draw.rect(screen, (240, 242, 247), panel_rect, border_radius=18)
-        pygame.draw.rect(screen, (18, 30, 54), panel_rect, 4, border_radius=18)
+        draw_rect_compat(screen, (240, 242, 247), panel_rect, border_radius=18)
+        draw_rect_compat(screen, (18, 30, 54), panel_rect, width=4, border_radius=18)
 
         draw_text_centered(screen, f"{winner_name} wins the match", title_font, (22, 34, 50), WIDTH // 2, 96)
         draw_text_centered(screen, "Top Scores", subtitle_font, (50, 68, 94), WIDTH // 2, 150)
 
         header_y = 196
-        pygame.draw.rect(screen, (210, 218, 231), pygame.Rect(panel_rect.x + 52, header_y, panel_rect.width - 104, 32), border_radius=8)
+        draw_rect_compat(screen, (210, 218, 231), pygame.Rect(panel_rect.x + 52, header_y, panel_rect.width - 104, 32), border_radius=8)
         screen.blit(small_font.render("Rank", True, (26, 36, 52)), (panel_rect.x + 68, header_y + 6))
         screen.blit(small_font.render("Pilot", True, (26, 36, 52)), (panel_rect.x + 146, header_y + 6))
         screen.blit(small_font.render("W", True, (26, 36, 52)), (panel_rect.right - 252, header_y + 6))
@@ -643,7 +716,7 @@ async def show_top_scores_screen(player_stats, winner_name):
                 index = scroll_offset + local_index
                 row_y = top_margin + (local_index - 1) * row_height
                 row_rect = pygame.Rect(panel_rect.x + 70, row_y, panel_rect.width - 140, 34)
-                pygame.draw.rect(screen, (222, 228, 238), row_rect, border_radius=8)
+                draw_rect_compat(screen, (222, 228, 238), row_rect, border_radius=8)
                 rank_text = font.render(f"{index}.", True, (26, 36, 52))
                 name_text = font.render(entry["name"], True, (26, 36, 52))
                 wins_text = font.render(str(entry["wins"]), True, (26, 36, 52))
@@ -666,8 +739,8 @@ async def show_top_scores_screen(player_stats, winner_name):
         else:
             draw_text_centered(screen, "No saved scores yet.", font, (52, 64, 82), WIDTH // 2, top_margin)
 
-        pygame.draw.rect(screen, (24, 96, 54), continue_button, border_radius=12)
-        pygame.draw.rect(screen, (18, 64, 38), continue_button, 3, border_radius=12)
+        draw_rect_compat(screen, (24, 96, 54), continue_button, border_radius=12)
+        draw_rect_compat(screen, (18, 64, 38), continue_button, width=3, border_radius=12)
         draw_text_centered(screen, "Continue", subtitle_font, (244, 248, 244), continue_button.centerx, continue_button.y + 9)
 
         pygame.display.flip()
@@ -680,10 +753,10 @@ def build_biplane_sprite(body_color, wing_color):
     pygame.draw.ellipse(sprite, body_color, (10, 10, 24, 8))
     pygame.draw.polygon(sprite, body_color, [(31, 10), (46, 14), (31, 18)])
     pygame.draw.polygon(sprite, body_color, [(8, 14), (2, 10), (2, 18)])
-    pygame.draw.rect(sprite, wing_color, pygame.Rect(13, 5, 21, 4), border_radius=2)
-    pygame.draw.rect(sprite, wing_color, pygame.Rect(13, 19, 21, 4), border_radius=2)
-    pygame.draw.rect(sprite, (70, 60, 45), pygame.Rect(18, 9, 2, 10), border_radius=1)
-    pygame.draw.rect(sprite, (70, 60, 45), pygame.Rect(27, 9, 2, 10), border_radius=1)
+    draw_rect_compat(sprite, wing_color, pygame.Rect(13, 5, 21, 4), border_radius=2)
+    draw_rect_compat(sprite, wing_color, pygame.Rect(13, 19, 21, 4), border_radius=2)
+    draw_rect_compat(sprite, (70, 60, 45), pygame.Rect(18, 9, 2, 10), border_radius=1)
+    draw_rect_compat(sprite, (70, 60, 45), pygame.Rect(27, 9, 2, 10), border_radius=1)
     pygame.draw.polygon(sprite, (160, 120, 60), [(4, 11), (1, 14), (4, 17)])
     pygame.draw.circle(sprite, (230, 230, 240), (20, 14), 3)
     pygame.draw.circle(sprite, (40, 40, 40), (20, 14), 1)
@@ -871,13 +944,13 @@ def draw_building(surface, building):
     ]
 
     chimney_rect = pygame.Rect(body_rect.right - 28, rect.y - 22, 12, 24)
-    pygame.draw.rect(surface, (140, 92, 76), chimney_rect, border_radius=2)
-    pygame.draw.rect(surface, (94, 58, 44), chimney_rect, 2, border_radius=2)
+    draw_rect_compat(surface, (140, 92, 76), chimney_rect, border_radius=2)
+    draw_rect_compat(surface, (94, 58, 44), chimney_rect, width=2, border_radius=2)
 
     pygame.draw.polygon(surface, (126, 66, 56), roof_points)
     pygame.draw.polygon(surface, (92, 48, 40), roof_points, 4)
-    pygame.draw.rect(surface, (230, 214, 185), body_rect, border_radius=6)
-    pygame.draw.rect(surface, (154, 118, 84), body_rect, 4, border_radius=6)
+    draw_rect_compat(surface, (230, 214, 185), body_rect, border_radius=6)
+    draw_rect_compat(surface, (154, 118, 84), body_rect, width=4, border_radius=6)
 
     attic_rect = pygame.Rect(rect.centerx - 15, body_rect.top - 2, 30, 22)
     pygame.draw.ellipse(surface, (249, 230, 151), attic_rect)
@@ -889,18 +962,18 @@ def draw_building(surface, building):
     right_window = pygame.Rect(body_rect.right - 18 - window_width, body_rect.top + 16, window_width, window_height)
 
     for window_rect in (left_window, right_window):
-        pygame.draw.rect(surface, (244, 225, 140), window_rect, border_radius=3)
-        pygame.draw.rect(surface, (125, 92, 54), window_rect, 2, border_radius=3)
+        draw_rect_compat(surface, (244, 225, 140), window_rect, border_radius=3)
+        draw_rect_compat(surface, (125, 92, 54), window_rect, width=2, border_radius=3)
         pygame.draw.line(surface, (125, 92, 54), (window_rect.centerx, window_rect.top + 3), (window_rect.centerx, window_rect.bottom - 3), 2)
         pygame.draw.line(surface, (125, 92, 54), (window_rect.left + 3, window_rect.centery), (window_rect.right - 3, window_rect.centery), 2)
 
     door_rect = pygame.Rect(rect.centerx - 18, body_rect.bottom - 40, 36, 40)
-    pygame.draw.rect(surface, (124, 82, 54), door_rect, border_radius=4)
-    pygame.draw.rect(surface, (88, 56, 36), door_rect, 3, border_radius=4)
+    draw_rect_compat(surface, (124, 82, 54), door_rect, border_radius=4)
+    draw_rect_compat(surface, (88, 56, 36), door_rect, width=3, border_radius=4)
     pygame.draw.circle(surface, (214, 184, 92), (door_rect.right - 8, door_rect.centery), 3)
 
     step_rect = pygame.Rect(door_rect.x - 8, door_rect.bottom - 2, door_rect.width + 16, 8)
-    pygame.draw.rect(surface, (144, 144, 144), step_rect, border_radius=3)
+    draw_rect_compat(surface, (144, 144, 144), step_rect, border_radius=3)
 
 
 def create_wind_gust():
@@ -1690,5 +1763,12 @@ async def main():
     pygame.quit()
 
 
+async def run_game():
+    try:
+        await main()
+    except Exception as error:
+        await show_fatal_error_screen(error)
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(run_game())
