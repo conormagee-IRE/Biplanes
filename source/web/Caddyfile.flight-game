@@ -1,0 +1,36 @@
+{
+    email {$FLIGHT_GAME_ACME_EMAIL}
+
+    servers {
+        trusted_proxies static private_ranges
+    }
+}
+
+{$FLIGHT_GAME_DOMAIN} {
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "geolocation=(), microphone=(), camera=()"
+    }
+
+    @score_api path /api/flight-game-scores*
+    reverse_proxy @score_api 127.0.0.1:8765 {
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+    }
+
+    @score_admin path /admin/flight-game-scores*
+    reverse_proxy @score_admin 127.0.0.1:8765 {
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+    }
+
+    root * {$FLIGHT_GAME_WEB_ROOT}
+    try_files {path} {path}/ /index.html
+    file_server
+}

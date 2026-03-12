@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+source/web/flight_game_web_scores.json
+source/web/flight_game_admin_audit.jsonl
+source/web/*.lock
+
+source/web/flight-game-v3/build/
+source/web/flight-game-v3/__pycache__/
+source/web/flight-game-v3/*.zip
+source/web/flight-game-v3/*.apk
+source/web/flight-game-v3/*.tar.gz

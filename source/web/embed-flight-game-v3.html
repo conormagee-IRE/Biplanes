@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flight Game V3</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --sky-top: #8bc4ff;
+      --sky-bottom: #dff2ff;
+      --panel: rgba(255, 255, 255, 0.72);
+      --text: #17324d;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: Georgia, "Times New Roman", serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top, rgba(255, 255, 255, 0.65), transparent 38%),
+        linear-gradient(180deg, var(--sky-top), var(--sky-bottom));
+    }
+
+    .frame {
+      width: min(96vw, 1320px);
+      padding: 18px;
+      border-radius: 20px;
+      background: var(--panel);
+      box-shadow: 0 24px 60px rgba(30, 64, 99, 0.22);
+      backdrop-filter: blur(12px);
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: clamp(1.8rem, 4vw, 3rem);
+      line-height: 1;
+    }
+
+    p {
+      margin: 0 0 16px;
+      font-size: 1rem;
+    }
+
+    iframe {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      border: 0;
+      border-radius: 14px;
+      background: #87c8ff;
+    }
+  </style>
+</head>
+<body>
+  <main class="frame">
+    <h1>Flight Game V3</h1>
+    <p>Update the iframe source below to the URL where you publish the pygbag build.</p>
+    <iframe src="/games/flight-game-v3/index.html" allowfullscreen title="Flight Game V3"></iframe>
+  </main>
+</body>
+</html>
