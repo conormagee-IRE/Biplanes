@@ -1,6 +1,6 @@
 {
-  "supabaseUrl": "",
-  "supabaseAnonKey": "",
+  "supabaseUrl": "https://ezcrxevguuzktxbvljfp.supabase.co",
+  "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV6Y3J4ZXZndXV6a3R4YnZsamZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzNTQ3NzQsImV4cCI6MjA4ODkzMDc3NH0.loatpd6jMaEC7hPuN2gZnJfaks1hey0x2K3S96vC8eU",
   "supabaseTable": "flight_game_scores",
   "scoreApiUrl": ""
 }
