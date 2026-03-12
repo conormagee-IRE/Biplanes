@@ -1,0 +1,6 @@
+{
+  "supabaseUrl": "",
+  "supabaseAnonKey": "",
+  "supabaseTable": "flight_game_scores",
+  "scoreApiUrl": ""
+}

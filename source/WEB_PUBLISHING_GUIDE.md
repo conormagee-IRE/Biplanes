@@ -17,6 +17,7 @@ Main blockers that existed in the desktop version:
 
 What has now been changed in [Flight Game 3 V3.py](c:/Users/conor/Game%201/Flight%20Game%203%20V3.py):
 - The web build now calls a score server API instead of browser-only local storage.
+- The web build can also load a static `flight-game-config.json` and use Supabase directly for shared scores.
 - The main game loop, name-entry loop, and top-scores loop now use async frame stepping so they can yield in a browser runtime.
 
 Residual web risks:
@@ -61,6 +62,7 @@ python .\flight_game_score_server.py
 - Admin protection with browser login or token auth enabled.
 - Exporting and restoring the scoreboard from the admin page.
 - Audit log entries after admin edits, imports, resets, and deletions.
+- Supabase loading correctly when `flight-game-config.json` is populated.
 - Keyboard controls for both players.
 - Weather timing and top-scores screen.
 
@@ -85,6 +87,16 @@ Medium-term:
 - Add browser-friendly scaling and fullscreen behavior.
 - Move the score server behind your production web host or proxy it under `/api/flight-game-scores`.
 - Protect the admin routes with `FLIGHT_GAME_ADMIN_USERNAME` and `FLIGHT_GAME_ADMIN_PASSWORD`, or keep `FLIGHT_GAME_ADMIN_TOKEN` behind your hosting gateway before public release.
+
+## 6. Simplest Shared Score Setup
+
+For the simplest public setup, use:
+
+1. GitHub Pages for the game.
+2. Supabase for the live scoreboard.
+3. A `flight-game-config.json` file beside the published `index.html` that contains your Supabase URL and anon key.
+
+See [web/SUPABASE_SETUP.md](c:/Users/conor/Game%201/web/SUPABASE_SETUP.md) for the exact table schema and config format.
 
 ## 5. Recommended Production Proxy
 

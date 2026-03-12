@@ -11,6 +11,8 @@ This folder contains a pygbag-ready copy of the current V3 game.
 - `flight_game_score_server.py`: shared scoreboard API server for the web version
 - `flight_game_score_admin.html`: browser admin page served by the score server
 - `Caddyfile.flight-game`: HTTPS reverse-proxy config for public hosting
+- `flight-game-config.json`: static web config file for Supabase or custom score API settings
+- `SUPABASE_SETUP.md`: setup guide for the GitHub Pages plus Supabase scoreboard path
 
 ## Local test
 
@@ -31,6 +33,8 @@ Set-Location "c:\Users\conor\Game 1\web"
 Then open `http://localhost:8000` in a browser.
 
 The web build will automatically call the score server at `http://localhost:8765/api/flight-game-scores` when running on `localhost`.
+
+If `flight-game-config.json` contains a Supabase URL and anon key, the web build will use Supabase instead of the custom score server.
 
 The admin page is available at `http://localhost:8765/admin/flight-game-scores`.
 
@@ -103,6 +107,7 @@ With this setup, admin credentials are sent only over HTTPS to the reverse proxy
 - The web build registers every named player when a match starts.
 - Wins and losses only change when a full match finishes and a winner reaches the match win threshold.
 - The leaderboard is ordered by `wins - losses` and displays wins, losses, and net score.
+- For GitHub Pages, the preferred shared-score setup is a static `flight-game-config.json` plus Supabase.
 - The score server stores data in `web/flight_game_web_scores.json` by default.
 - The admin page can refresh scores, edit or create player records, delete players, and reset the entire scoreboard.
 - Set `FLIGHT_GAME_ADMIN_USERNAME` and `FLIGHT_GAME_ADMIN_PASSWORD` before starting the score server if you want browser login protection on the admin page and admin APIs.

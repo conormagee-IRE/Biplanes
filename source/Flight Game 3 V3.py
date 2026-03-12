@@ -70,8 +70,11 @@ PLAYER_STATS_LOCK_POLL_INTERVAL = 0.1
 DEFAULT_WEB_SCORE_API_PATH = "/api/flight-game-scores"
 DEFAULT_WEB_SCORE_API_PORT = "8765"
 WEB_SCORE_REQUEST_TIMEOUT = 1.5
+DEFAULT_WEB_CONFIG_FILE = "flight-game-config.json"
+DEFAULT_SUPABASE_TABLE = "flight_game_scores"
 IS_WEB = sys.platform in ("emscripten", "wasi") or browser_window is not None
 UI_FONT_NAME = "arial" if IS_WEB else "consolas"
+WEB_RUNTIME_CONFIG = None
 
 # Plane drawing
 PLANE_LENGTH = 32
@@ -126,14 +129,127 @@ def get_browser_hostname():
         return ""
 
 
+def get_window_config_value(name):
+    if browser_window is None:
+        return None
+
+    try:
+        value = getattr(browser_window, name, None)
+    except Exception:
+        return None
+    return value if value not in (None, "") else None
+
+
+def get_cached_web_config_value(name):
+    if not isinstance(WEB_RUNTIME_CONFIG, dict):
+        return None
+    value = WEB_RUNTIME_CONFIG.get(name)
+    return value if value not in (None, "") else None
+
+
+def get_web_runtime_config_url():
+    if browser_window is None:
+        return DEFAULT_WEB_CONFIG_FILE
+
+    try:
+        href = str(browser_window.location.href).split("#", 1)[0].split("?", 1)[0]
+    except Exception:
+        return DEFAULT_WEB_CONFIG_FILE
+
+    if "/" not in href:
+        return DEFAULT_WEB_CONFIG_FILE
+    return f"{href.rsplit('/', 1)[0]}/{DEFAULT_WEB_CONFIG_FILE}"
+
+
+async def fetch_browser_json(url, params=None, method="GET", headers=None, body=None):
+    if browser_window is None:
+        return None
+
+    query_params = list(params or [])
+    query_params.append(("_ts", str(pygame.time.get_ticks())))
+    query_string = urlencode(query_params, doseq=True)
+    if query_string:
+        separator = "&" if "?" in url else "?"
+        url = f"{url}{separator}{query_string}"
+
+    fetch_options = {"method": method}
+    if headers:
+        fetch_options["headers"] = headers
+    if body is not None:
+        fetch_options["body"] = body
+
+    try:
+        response = await asyncio.wait_for(browser_window.fetch(url, fetch_options), timeout=WEB_SCORE_REQUEST_TIMEOUT)
+        status_ok = bool(response.ok)
+    except Exception:
+        return None
+
+    if not status_ok:
+        return None
+
+    try:
+        payload = await asyncio.wait_for(response.text(), timeout=WEB_SCORE_REQUEST_TIMEOUT)
+    except Exception:
+        return None
+
+    try:
+        return json.loads(str(payload))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+async def ensure_web_runtime_config_loaded():
+    global WEB_RUNTIME_CONFIG
+
+    if WEB_RUNTIME_CONFIG is not None:
+        return WEB_RUNTIME_CONFIG
+
+    WEB_RUNTIME_CONFIG = {}
+    if browser_window is None:
+        return WEB_RUNTIME_CONFIG
+
+    payload = await fetch_browser_json(get_web_runtime_config_url(), params=[])
+    if isinstance(payload, dict):
+        WEB_RUNTIME_CONFIG = payload
+    return WEB_RUNTIME_CONFIG
+
+
+def get_supabase_url():
+    configured_value = get_window_config_value("FLIGHT_GAME_SUPABASE_URL")
+    if configured_value is None:
+        configured_value = get_cached_web_config_value("supabaseUrl")
+    if configured_value is None:
+        return ""
+    return str(configured_value).rstrip("/")
+
+
+def get_supabase_anon_key():
+    configured_value = get_window_config_value("FLIGHT_GAME_SUPABASE_ANON_KEY")
+    if configured_value is None:
+        configured_value = get_cached_web_config_value("supabaseAnonKey")
+    if configured_value is None:
+        return ""
+    return str(configured_value)
+
+
+def get_supabase_table_name():
+    configured_value = get_cached_web_config_value("supabaseTable")
+    if configured_value is None:
+        return DEFAULT_SUPABASE_TABLE
+    return str(configured_value)
+
+
+def should_use_supabase():
+    return bool(get_supabase_url() and get_supabase_anon_key())
+
+
 def should_use_web_score_api():
     if browser_window is None:
         return False
 
-    try:
-        configured_url = getattr(browser_window, "FLIGHT_GAME_SCORE_API_URL", None)
-    except Exception:
-        configured_url = None
+    configured_url = get_window_config_value("FLIGHT_GAME_SCORE_API_URL")
+    if configured_url is None:
+        configured_url = get_cached_web_config_value("scoreApiUrl")
 
     if configured_url:
         return True
@@ -152,10 +268,9 @@ def get_web_score_api_url():
     if browser_window is None:
         return DEFAULT_WEB_SCORE_API_PATH
 
-    try:
-        configured_url = getattr(browser_window, "FLIGHT_GAME_SCORE_API_URL", None)
-    except Exception:
-        configured_url = None
+    configured_url = get_window_config_value("FLIGHT_GAME_SCORE_API_URL")
+    if configured_url is None:
+        configured_url = get_cached_web_config_value("scoreApiUrl")
 
     if configured_url:
         return str(configured_url).rstrip("/")
@@ -178,32 +293,88 @@ def get_web_score_api_url():
 async def fetch_web_score_json(endpoint="", params=None):
     if browser_window is None or not should_use_web_score_api():
         return None
-
-    query_params = list(params or [])
-    query_params.append(("_ts", str(pygame.time.get_ticks())))
-    query_string = urlencode(query_params, doseq=True)
     url = f"{get_web_score_api_url().rstrip('/')}{endpoint}"
-    if query_string:
-        url = f"{url}?{query_string}"
+    return await fetch_browser_json(url, params=params)
 
-    try:
-        response = await asyncio.wait_for(browser_window.fetch(url), timeout=WEB_SCORE_REQUEST_TIMEOUT)
-        status_ok = bool(response.ok)
-    except Exception:
-        return None
 
-    if not status_ok:
-        return None
+def deserialize_supabase_rows(rows):
+    if not isinstance(rows, list):
+        return {}
 
-    try:
-        payload = await asyncio.wait_for(response.text(), timeout=WEB_SCORE_REQUEST_TIMEOUT)
-    except Exception:
-        return None
+    cleaned_players = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        player_key = str(row.get("player_key", "")).strip().casefold()
+        cleaned_entry = sanitize_player_record(row, str(row.get("name", player_key)))
+        if not player_key or cleaned_entry is None:
+            continue
+        cleaned_players[player_key] = cleaned_entry
+    return cleaned_players
 
-    try:
-        return json.loads(str(payload))
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return None
+
+def build_supabase_headers(include_json_content=False, prefer_header=None):
+    anon_key = get_supabase_anon_key()
+    headers = {
+        "apikey": anon_key,
+        "Authorization": f"Bearer {anon_key}",
+        "Accept": "application/json",
+    }
+    if include_json_content:
+        headers["Content-Type"] = "application/json"
+    if prefer_header:
+        headers["Prefer"] = prefer_header
+    return headers
+
+
+def build_supabase_record(player_key, entry):
+    return {
+        "player_key": player_key,
+        "name": entry["name"],
+        "wins": entry["wins"],
+        "losses": entry["losses"],
+        "games_started": entry["games_started"],
+    }
+
+
+async def load_supabase_player_stats():
+    rows = await fetch_browser_json(
+        f"{get_supabase_url()}/rest/v1/{get_supabase_table_name()}",
+        params=[("select", "player_key,name,wins,losses,games_started")],
+        headers=build_supabase_headers(),
+    )
+    return deserialize_supabase_rows(rows)
+
+
+async def upsert_supabase_player_stats(player_stats, player_keys):
+    payload = []
+    for player_key in player_keys:
+        entry = player_stats.get(player_key)
+        if entry is None:
+            continue
+        payload.append(build_supabase_record(player_key, entry))
+
+    if not payload:
+        return False
+
+    rows = await fetch_browser_json(
+        f"{get_supabase_url()}/rest/v1/{get_supabase_table_name()}",
+        params=[("on_conflict", "player_key")],
+        method="POST",
+        headers=build_supabase_headers(
+            include_json_content=True,
+            prefer_header="resolution=merge-duplicates,return=representation",
+        ),
+        body=json.dumps(payload),
+    )
+
+    if not isinstance(rows, list):
+        return False
+
+    latest_rows = deserialize_supabase_rows(rows)
+    for player_key, entry in latest_rows.items():
+        player_stats[player_key] = entry
+    return True
 
 
 def apply_player_stats_snapshot(player_stats, snapshot):
@@ -295,6 +466,9 @@ def deserialize_player_stats(payload):
 
 async def load_player_stats():
     if IS_WEB:
+        await ensure_web_runtime_config_loaded()
+        if should_use_supabase():
+            return await load_supabase_player_stats()
         response_payload = await fetch_web_score_json()
         if isinstance(response_payload, dict):
             return deserialize_player_stats(json.dumps(response_payload))
@@ -342,6 +516,17 @@ def save_player_stats(player_stats):
 
 async def register_players_for_match(player_stats, player_names):
     if IS_WEB:
+        await ensure_web_runtime_config_loaded()
+        if should_use_supabase():
+            updated_keys = []
+            for name in player_names:
+                player_key = ensure_player_profile(player_stats, name)
+                player_stats[player_key]["games_started"] += 1
+                updated_keys.append(player_key)
+
+            if await upsert_supabase_player_stats(player_stats, updated_keys):
+                return
+
         response_payload = await fetch_web_score_json(
             "/register",
             [("name", name) for name in player_names],
@@ -365,6 +550,13 @@ async def record_match_result(player_stats, winner_key, loser_key):
         return
 
     if IS_WEB:
+        await ensure_web_runtime_config_loaded()
+        if should_use_supabase():
+            winner_entry["wins"] += 1
+            loser_entry["losses"] += 1
+            if await upsert_supabase_player_stats(player_stats, [winner_key, loser_key]):
+                return
+
         response_payload = await fetch_web_score_json(
             "/record-match",
             [("winner", winner_entry["name"]), ("loser", loser_entry["name"])],
