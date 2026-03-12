@@ -161,6 +161,79 @@ def get_web_runtime_config_url():
     return f"{href.rsplit('/', 1)[0]}/{DEFAULT_WEB_CONFIG_FILE}"
 
 
+async def fetch_browser_text_via_js(url, method="GET", headers=None, body=None):
+    if browser_window is None:
+        return None
+
+    eval_function = getattr(browser_window, "eval", None)
+    if eval_function is None:
+        return None
+
+    request_id = f"flight_game_fetch_{pygame.time.get_ticks()}_{random.randint(1000, 9999)}"
+    request_script = f"""
+(() => {{
+  const store = window.__flightGameFetchResults || (window.__flightGameFetchResults = {{}});
+  fetch({json.dumps(url)}, {{
+    method: {json.dumps(method)},
+    headers: {json.dumps(headers or {})},
+    body: {json.dumps(body) if body is not None else 'null'}
+  }})
+    .then(async (response) => {{
+      const text = await response.text();
+      store[{json.dumps(request_id)}] = JSON.stringify({{
+        ok: !!response.ok,
+        status: response.status,
+        text
+      }});
+    }})
+    .catch((error) => {{
+      store[{json.dumps(request_id)}] = JSON.stringify({{
+        ok: false,
+        status: 0,
+        error: String(error)
+      }});
+    }});
+}})();
+"""
+
+    try:
+        eval_function(request_script)
+    except Exception:
+        return None
+
+    request_lookup = f"window.__flightGameFetchResults && window.__flightGameFetchResults[{json.dumps(request_id)}]"
+    request_cleanup = f"if (window.__flightGameFetchResults) delete window.__flightGameFetchResults[{json.dumps(request_id)}]"
+    deadline = time.monotonic() + WEB_SCORE_REQUEST_TIMEOUT
+    while time.monotonic() < deadline:
+        try:
+            result_payload = eval_function(request_lookup)
+        except Exception:
+            result_payload = None
+
+        if result_payload not in (None, "", "undefined"):
+            try:
+                eval_function(request_cleanup)
+            except Exception:
+                pass
+
+            try:
+                result_data = json.loads(str(result_payload))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return None
+
+            if not result_data.get("ok"):
+                return None
+            return str(result_data.get("text", ""))
+
+        await asyncio.sleep(0)
+
+    try:
+        eval_function(request_cleanup)
+    except Exception:
+        pass
+    return None
+
+
 async def fetch_browser_json(url, params=None, method="GET", headers=None, body=None):
     if browser_window is None:
         return None
@@ -177,6 +250,16 @@ async def fetch_browser_json(url, params=None, method="GET", headers=None, body=
         fetch_options["headers"] = headers
     if body is not None:
         fetch_options["body"] = body
+
+    if headers or body is not None:
+        payload = await fetch_browser_text_via_js(url, method=method, headers=headers, body=body)
+        if payload is None:
+            return None
+
+        try:
+            return json.loads(str(payload))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
 
     try:
         response = await asyncio.wait_for(browser_window.fetch(url, fetch_options), timeout=WEB_SCORE_REQUEST_TIMEOUT)
