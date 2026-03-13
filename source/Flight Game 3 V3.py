@@ -1043,7 +1043,9 @@ async def show_top_scores_screen(player_stats, winner_name):
     continue_button = pygame.Rect(WIDTH // 2 - 120, HEIGHT - 110, 240, 54)
     leaderboard = get_sorted_top_scores(player_stats)
     row_height = 38
-    top_margin = 214
+    header_y = 196
+    header_height = 32
+    top_margin = header_y + header_height + 18
     bottom_limit = continue_button.y - 26
     rows_per_page = max(1, (bottom_limit - top_margin) // row_height)
     scroll_offset = 0
@@ -1071,7 +1073,6 @@ async def show_top_scores_screen(player_stats, winner_name):
         draw_text_centered(screen, f"{winner_name} wins the match", title_font, (22, 34, 50), WIDTH // 2, 96)
         draw_text_centered(screen, "Top Scores", subtitle_font, (50, 68, 94), WIDTH // 2, 150)
 
-        header_y = 196
         draw_rect_compat(screen, (210, 218, 231), pygame.Rect(panel_rect.x + 52, header_y, panel_rect.width - 104, 32), border_radius=8)
         screen.blit(small_font.render("Rank", True, (26, 36, 52)), (panel_rect.x + 68, header_y + 6))
         screen.blit(small_font.render("Pilot", True, (26, 36, 52)), (panel_rect.x + 146, header_y + 6))
