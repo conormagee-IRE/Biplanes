@@ -69,7 +69,7 @@ PLAYER_STATS_LOCK_TIMEOUT = 5.0
 PLAYER_STATS_LOCK_POLL_INTERVAL = 0.1
 DEFAULT_WEB_SCORE_API_PATH = "/api/flight-game-scores"
 DEFAULT_WEB_SCORE_API_PORT = "8765"
-WEB_SCORE_REQUEST_TIMEOUT = 1.5
+WEB_SCORE_REQUEST_TIMEOUT = 5.0
 DEFAULT_WEB_CONFIG_FILE = "flight-game-config.json"
 DEFAULT_SUPABASE_URL = "https://ezcrxevguuzktxbvljfp.supabase.co"
 DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV6Y3J4ZXZndXV6a3R4YnZsamZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzNTQ3NzQsImV4cCI6MjA4ODkzMDc3NH0.loatpd6jMaEC7hPuN2gZnJfaks1hey0x2K3S96vC8eU"
@@ -261,7 +261,7 @@ async def fetch_browser_text_via_js(url, method="GET", headers=None, body=None):
                 return None
             return str(result_data.get("text", ""))
 
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.05)
 
     try:
         eval_function(request_cleanup)
