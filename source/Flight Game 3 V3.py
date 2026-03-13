@@ -283,7 +283,9 @@ async def fetch_browser_json(url, params=None, method="GET", headers=None, body=
         return None
 
     query_params = list(params or [])
-    query_params.append(("_ts", str(pygame.time.get_ticks())))
+    should_add_cache_buster = not headers and body is None and "rest/v1/" not in str(url)
+    if should_add_cache_buster:
+        query_params.append(("_ts", str(pygame.time.get_ticks())))
     query_string = urlencode(query_params, doseq=True)
     if query_string:
         separator = "&" if "?" in url else "?"
