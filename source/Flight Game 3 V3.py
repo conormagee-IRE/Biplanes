@@ -77,6 +77,7 @@ DEFAULT_SUPABASE_TABLE = "flight_game_scores"
 IS_WEB = sys.platform in ("emscripten", "wasi") or browser_window is not None
 UI_FONT_NAME = "arial" if IS_WEB else "consolas"
 WEB_RUNTIME_CONFIG = None
+WEB_SCORE_STATUS_MESSAGE = ""
 
 # Plane drawing
 PLANE_LENGTH = 32
@@ -119,6 +120,15 @@ def sanitize_player_record(entry, fallback_name=""):
 
 def get_player_net_score(entry):
     return entry["wins"] - entry["losses"]
+
+
+def set_web_score_status(message):
+    global WEB_SCORE_STATUS_MESSAGE
+    WEB_SCORE_STATUS_MESSAGE = str(message).strip()[:220]
+
+
+def get_web_score_status():
+    return WEB_SCORE_STATUS_MESSAGE
 
 
 def get_browser_hostname():
@@ -199,11 +209,11 @@ def get_web_runtime_config_urls():
 
 async def fetch_browser_text_via_js(url, method="GET", headers=None, body=None):
     if browser_window is None:
-        return None
+        return {"ok": False, "status": 0, "error": "browser window unavailable"}
 
     eval_function = getattr(browser_window, "eval", None)
     if eval_function is None:
-        return None
+        return {"ok": False, "status": 0, "error": "browser eval unavailable"}
 
     request_id = f"flight_game_fetch_{pygame.time.get_ticks()}_{random.randint(1000, 9999)}"
     request_script = f"""
@@ -235,7 +245,7 @@ async def fetch_browser_text_via_js(url, method="GET", headers=None, body=None):
     try:
         eval_function(request_script)
     except Exception:
-        return None
+        return {"ok": False, "status": 0, "error": "browser fetch bootstrap failed"}
 
     request_lookup = f"window.__flightGameFetchResults && window.__flightGameFetchResults[{json.dumps(request_id)}]"
     request_cleanup = f"if (window.__flightGameFetchResults) delete window.__flightGameFetchResults[{json.dumps(request_id)}]"
@@ -255,11 +265,9 @@ async def fetch_browser_text_via_js(url, method="GET", headers=None, body=None):
             try:
                 result_data = json.loads(str(result_payload))
             except (TypeError, ValueError, json.JSONDecodeError):
-                return None
+                return {"ok": False, "status": 0, "error": "invalid browser fetch response"}
 
-            if not result_data.get("ok"):
-                return None
-            return str(result_data.get("text", ""))
+            return result_data
 
         await asyncio.sleep(0.05)
 
@@ -267,10 +275,10 @@ async def fetch_browser_text_via_js(url, method="GET", headers=None, body=None):
         eval_function(request_cleanup)
     except Exception:
         pass
-    return None
+    return {"ok": False, "status": 0, "error": "browser fetch timed out"}
 
 
-async def fetch_browser_json(url, params=None, method="GET", headers=None, body=None):
+async def fetch_browser_json(url, params=None, method="GET", headers=None, body=None, debug_label=None):
     if browser_window is None:
         return None
 
@@ -288,32 +296,50 @@ async def fetch_browser_json(url, params=None, method="GET", headers=None, body=
         fetch_options["body"] = body
 
     if headers or body is not None:
-        payload = await fetch_browser_text_via_js(url, method=method, headers=headers, body=body)
-        if payload is None:
+        response_data = await fetch_browser_text_via_js(url, method=method, headers=headers, body=body)
+        if not isinstance(response_data, dict):
             return None
 
+        if not response_data.get("ok"):
+            error_detail = response_data.get("error") or response_data.get("text") or f"HTTP {response_data.get('status', 0)}"
+            if debug_label:
+                set_web_score_status(f"{debug_label} failed: {str(error_detail).strip()[:160]}")
+            return None
+
+        payload = str(response_data.get("text", ""))
+
         try:
-            return json.loads(str(payload))
+            return json.loads(payload)
         except (TypeError, ValueError, json.JSONDecodeError):
+            if debug_label:
+                set_web_score_status(f"{debug_label} failed: invalid JSON response")
             return None
 
     try:
         response = await asyncio.wait_for(browser_window.fetch(url, fetch_options), timeout=WEB_SCORE_REQUEST_TIMEOUT)
         status_ok = bool(response.ok)
     except Exception:
+        if debug_label:
+            set_web_score_status(f"{debug_label} failed: browser fetch error")
         return None
 
     if not status_ok:
+        if debug_label:
+            set_web_score_status(f"{debug_label} failed: HTTP request was not ok")
         return None
 
     try:
         payload = await asyncio.wait_for(response.text(), timeout=WEB_SCORE_REQUEST_TIMEOUT)
     except Exception:
+        if debug_label:
+            set_web_score_status(f"{debug_label} failed: response read timed out")
         return None
 
     try:
         return json.loads(str(payload))
     except (TypeError, ValueError, json.JSONDecodeError):
+        if debug_label:
+            set_web_score_status(f"{debug_label} failed: invalid JSON response")
         return None
 
 
@@ -328,12 +354,17 @@ async def ensure_web_runtime_config_loaded():
         return WEB_RUNTIME_CONFIG
 
     for config_url in get_web_runtime_config_urls():
-        payload = await fetch_browser_json(config_url, params=[])
+        payload = await fetch_browser_json(config_url, params=[], debug_label="Load web config")
         if isinstance(payload, dict):
             WEB_RUNTIME_CONFIG = payload
+            set_web_score_status("Loaded web config")
             return WEB_RUNTIME_CONFIG
 
     WEB_RUNTIME_CONFIG = {}
+    if should_use_supabase():
+        set_web_score_status("Using built-in Supabase config")
+    else:
+        set_web_score_status("No shared score backend configured")
     return WEB_RUNTIME_CONFIG
 
 
@@ -417,7 +448,7 @@ async def fetch_web_score_json(endpoint="", params=None):
     if browser_window is None or not should_use_web_score_api():
         return None
     url = f"{get_web_score_api_url().rstrip('/')}{endpoint}"
-    return await fetch_browser_json(url, params=params)
+    return await fetch_browser_json(url, params=params, debug_label="Score API")
 
 
 def deserialize_supabase_rows(rows):
@@ -465,7 +496,10 @@ async def load_supabase_player_stats():
         f"{get_supabase_url()}/rest/v1/{get_supabase_table_name()}",
         params=[("select", "player_key,name,wins,losses,games_started")],
         headers=build_supabase_headers(),
+        debug_label="Load Supabase scores",
     )
+    if isinstance(rows, list):
+        set_web_score_status(f"Loaded {len(rows)} score rows from Supabase")
     return deserialize_supabase_rows(rows)
 
 
@@ -489,6 +523,7 @@ async def upsert_supabase_player_stats(player_stats, player_keys):
             prefer_header="resolution=merge-duplicates,return=representation",
         ),
         body=json.dumps(payload),
+        debug_label="Sync Supabase scores",
     )
 
     if not isinstance(rows, list):
@@ -497,6 +532,7 @@ async def upsert_supabase_player_stats(player_stats, player_keys):
     latest_rows = deserialize_supabase_rows(rows)
     for player_key, entry in latest_rows.items():
         player_stats[player_key] = entry
+    set_web_score_status(f"Supabase sync ok for {len(latest_rows)} player(s)")
     return True
 
 
@@ -595,6 +631,7 @@ async def load_player_stats():
         response_payload = await fetch_web_score_json()
         if isinstance(response_payload, dict):
             return deserialize_player_stats(json.dumps(response_payload))
+        set_web_score_status("No persisted scores loaded")
         return {}
 
     return deserialize_player_stats(read_stats_payload())
@@ -649,6 +686,7 @@ async def register_players_for_match(player_stats, player_names):
 
             if await upsert_supabase_player_stats(player_stats, updated_keys):
                 return
+            set_web_score_status("Supabase player registration failed; using session-only scores")
 
         response_payload = await fetch_web_score_json(
             "/register",
@@ -679,6 +717,7 @@ async def record_match_result(player_stats, winner_key, loser_key):
             loser_entry["losses"] += 1
             if await upsert_supabase_player_stats(player_stats, [winner_key, loser_key]):
                 return
+            set_web_score_status("Supabase match write failed; showing session-only scores")
 
         response_payload = await fetch_web_score_json(
             "/record-match",
@@ -752,6 +791,17 @@ def draw_text_centered(surface, text, text_font, color, center_x, top_y):
     rect = image.get_rect(midtop=(center_x, top_y))
     surface.blit(image, rect)
     return rect
+
+
+def draw_web_score_status(surface, center_x, top_y, color=(70, 88, 116)):
+    status_message = get_web_score_status()
+    if not status_message:
+        return top_y
+
+    status_image = small_font.render(status_message[:140], True, color)
+    status_rect = status_image.get_rect(midtop=(center_x, top_y))
+    surface.blit(status_image, status_rect)
+    return status_rect.bottom
 
 
 def draw_rect_compat(surface, color, rect, width=0, border_radius=0):
@@ -936,6 +986,8 @@ def draw_name_entry_screen(input_names, active_index, error_message, player_stat
     if error_message:
         draw_text_centered(screen, error_message, small_font, (180, 46, 46), WIDTH // 2, button_rect.y - 42)
 
+    draw_web_score_status(screen, WIDTH // 2, button_rect.bottom + 16)
+
     pygame.display.flip()
     return field_rects, button_rect
 
@@ -1057,6 +1109,7 @@ async def show_top_scores_screen(player_stats, winner_name):
         draw_rect_compat(screen, (24, 96, 54), continue_button, border_radius=12)
         draw_rect_compat(screen, (18, 64, 38), continue_button, width=3, border_radius=12)
         draw_text_centered(screen, "Continue", subtitle_font, (244, 248, 244), continue_button.centerx, continue_button.y + 9)
+        draw_web_score_status(screen, WIDTH // 2, continue_button.y - 82)
 
         pygame.display.flip()
         await wait_for_next_frame()
