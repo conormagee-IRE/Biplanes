@@ -71,6 +71,8 @@ DEFAULT_WEB_SCORE_API_PATH = "/api/flight-game-scores"
 DEFAULT_WEB_SCORE_API_PORT = "8765"
 WEB_SCORE_REQUEST_TIMEOUT = 1.5
 DEFAULT_WEB_CONFIG_FILE = "flight-game-config.json"
+DEFAULT_SUPABASE_URL = "https://ezcrxevguuzktxbvljfp.supabase.co"
+DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV6Y3J4ZXZndXV6a3R4YnZsamZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzNTQ3NzQsImV4cCI6MjA4ODkzMDc3NH0.loatpd6jMaEC7hPuN2gZnJfaks1hey0x2K3S96vC8eU"
 DEFAULT_SUPABASE_TABLE = "flight_game_scores"
 IS_WEB = sys.platform in ("emscripten", "wasi") or browser_window is not None
 UI_FONT_NAME = "arial" if IS_WEB else "consolas"
@@ -147,18 +149,52 @@ def get_cached_web_config_value(name):
     return value if value not in (None, "") else None
 
 
-def get_web_runtime_config_url():
+def get_web_runtime_config_urls():
     if browser_window is None:
-        return DEFAULT_WEB_CONFIG_FILE
+        return [DEFAULT_WEB_CONFIG_FILE]
 
     try:
         href = str(browser_window.location.href).split("#", 1)[0].split("?", 1)[0]
     except Exception:
-        return DEFAULT_WEB_CONFIG_FILE
+        href = ""
 
-    if "/" not in href:
-        return DEFAULT_WEB_CONFIG_FILE
-    return f"{href.rsplit('/', 1)[0]}/{DEFAULT_WEB_CONFIG_FILE}"
+    try:
+        origin = str(browser_window.location.origin).rstrip("/")
+    except Exception:
+        origin = ""
+
+    try:
+        pathname = str(browser_window.location.pathname)
+    except Exception:
+        pathname = ""
+
+    candidate_urls = [DEFAULT_WEB_CONFIG_FILE]
+
+    if href and "/" in href:
+        candidate_urls.append(f"{href.rsplit('/', 1)[0]}/{DEFAULT_WEB_CONFIG_FILE}")
+
+    normalized_path = pathname.split("#", 1)[0].split("?", 1)[0].strip()
+    if normalized_path:
+        if normalized_path.endswith("/"):
+            base_path = normalized_path.rstrip("/")
+        elif "." in normalized_path.rsplit("/", 1)[-1]:
+            base_path = normalized_path.rsplit("/", 1)[0]
+        else:
+            base_path = normalized_path
+
+        if origin:
+            if base_path:
+                candidate_urls.append(f"{origin}{base_path}/{DEFAULT_WEB_CONFIG_FILE}")
+            candidate_urls.append(f"{origin}/{DEFAULT_WEB_CONFIG_FILE}")
+
+    unique_urls = []
+    seen_urls = set()
+    for candidate in candidate_urls:
+        if not candidate or candidate in seen_urls:
+            continue
+        seen_urls.add(candidate)
+        unique_urls.append(candidate)
+    return unique_urls
 
 
 async def fetch_browser_text_via_js(url, method="GET", headers=None, body=None):
@@ -284,16 +320,20 @@ async def fetch_browser_json(url, params=None, method="GET", headers=None, body=
 async def ensure_web_runtime_config_loaded():
     global WEB_RUNTIME_CONFIG
 
-    if WEB_RUNTIME_CONFIG is not None:
+    if isinstance(WEB_RUNTIME_CONFIG, dict) and WEB_RUNTIME_CONFIG:
         return WEB_RUNTIME_CONFIG
+
+    if browser_window is None:
+        WEB_RUNTIME_CONFIG = {}
+        return WEB_RUNTIME_CONFIG
+
+    for config_url in get_web_runtime_config_urls():
+        payload = await fetch_browser_json(config_url, params=[])
+        if isinstance(payload, dict):
+            WEB_RUNTIME_CONFIG = payload
+            return WEB_RUNTIME_CONFIG
 
     WEB_RUNTIME_CONFIG = {}
-    if browser_window is None:
-        return WEB_RUNTIME_CONFIG
-
-    payload = await fetch_browser_json(get_web_runtime_config_url(), params=[])
-    if isinstance(payload, dict):
-        WEB_RUNTIME_CONFIG = payload
     return WEB_RUNTIME_CONFIG
 
 
@@ -302,7 +342,7 @@ def get_supabase_url():
     if configured_value is None:
         configured_value = get_cached_web_config_value("supabaseUrl")
     if configured_value is None:
-        return ""
+        configured_value = DEFAULT_SUPABASE_URL
     return str(configured_value).rstrip("/")
 
 
@@ -311,7 +351,7 @@ def get_supabase_anon_key():
     if configured_value is None:
         configured_value = get_cached_web_config_value("supabaseAnonKey")
     if configured_value is None:
-        return ""
+        configured_value = DEFAULT_SUPABASE_ANON_KEY
     return str(configured_value)
 
 
