@@ -25,12 +25,27 @@ SIMULATION_SPEED = 0.75
 MAX_FRAME_TIME = 0.1
 
 # Physics constants
-GRAVITY = 200.0
+GRAVITY = 300
+BASE_LIFT = 300
+LIFT_AOA_FACTOR = 0.8
+LIFT_MIN_FACTOR = 0.2
+LIFT_MAX_FACTOR = 1.8
+LIFT_SPEED_GAIN = 0.003
+LIFT_SPEED_MAX_FACTOR = 5
+ALTITUDE_LIFT_DROP = 0.6
+ALTITUDE_LIFT_MIN_FACTOR = 0.2
 STALL_SPEED = 150.0
-MAX_THRUST_ACCEL = 300.0
+MAX_THRUST_ACCEL = 400.0
+UPWARD_VERTICAL_THRUST_FACTOR = 0.6
+DOWNWARD_VERTICAL_THRUST_FACTOR = 1.0
 DRAG_COEFF = 0.002
-AOA_DRAG_FACTOR = 0.5
+AOA_DRAG_FACTOR = 0.01
+AOA_DRAG_THRESHOLD = math.radians(30)
+AOA_EXCESS_DRAG_FACTOR = 2.0
 THROTTLE_RAMP_RATE = 2
+BASE_TURN_RATE = 2.0
+TURN_RATE_SPEED_GAIN = 0.005
+TURN_RATE_MAX_MULTIPLIER = 5
 LANDING_MAX_SPEED = 250.0
 LANDING_MAX_DESCENT = 200.0
 GROUND_FRICTION = 180.0
@@ -1870,6 +1885,12 @@ class Plane:
         return air_vx * fx + air_vy * fy
 
     @property
+    def turn_rate(self):
+        speed_multiplier = 1.0 + max(0.0, self.forward_speed) * TURN_RATE_SPEED_GAIN
+        speed_multiplier = min(TURN_RATE_MAX_MULTIPLIER, speed_multiplier)
+        return BASE_TURN_RATE * speed_multiplier
+
+    @property
     def angle_of_attack(self):
         fx_s, fy_s = self.forward_vector
         vx_s, vy_s = self.velocity_direction
@@ -1950,7 +1971,8 @@ class Plane:
         thrust_accel *= (altitude_factor * 1.5)
 
         ax += fx * thrust_accel
-        ay += fy * thrust_accel
+        vertical_thrust_factor = UPWARD_VERTICAL_THRUST_FACTOR if fy < 0 else DOWNWARD_VERTICAL_THRUST_FACTOR
+        ay += fy * thrust_accel * vertical_thrust_factor
 
         air_vx, air_vy = self.air_velocity
 
@@ -1965,20 +1987,27 @@ class Plane:
             drag_dir_x = -air_vx / self.speed
             drag_dir_y = -air_vy / self.speed
             aoa = abs(self.angle_of_attack)
-            drag_mag = DRAG_COEFF * (self.speed ** 2) * (1.0 + AOA_DRAG_FACTOR * aoa)
+            capped_aoa = min(aoa, AOA_DRAG_THRESHOLD)
+            excess_aoa = max(0.0, aoa - AOA_DRAG_THRESHOLD)
+            aoa_drag = AOA_DRAG_FACTOR * capped_aoa
+            aoa_drag += AOA_EXCESS_DRAG_FACTOR * excess_aoa
+            drag_mag = DRAG_COEFF * (self.speed ** 2) * (1.0 + aoa_drag)
             ax += drag_dir_x * drag_mag
             ay += drag_dir_y * drag_mag
 
         if self.forward_speed > STALL_SPEED:
             aoa = self.angle_of_attack
-            lift_factor = 1.0 + 0.8 * aoa
-            lift_factor = max(0.2, min(1.8, lift_factor))
+            lift_factor = 1.0 + LIFT_AOA_FACTOR * aoa
+            lift_factor = max(LIFT_MIN_FACTOR, min(LIFT_MAX_FACTOR, lift_factor))
+
+            speed_lift_factor = 1.0 + (self.forward_speed - STALL_SPEED) * LIFT_SPEED_GAIN
+            speed_lift_factor = min(LIFT_SPEED_MAX_FACTOR, speed_lift_factor)
 
             altitude_ratio = self.y / (HEIGHT - GROUND_HEIGHT)
-            altitude_lift_factor = 1.0 - 0.6 * altitude_ratio
-            altitude_lift_factor = max(0.2, altitude_lift_factor)
+            altitude_lift_factor = 1.0 - ALTITUDE_LIFT_DROP * altitude_ratio
+            altitude_lift_factor = max(ALTITUDE_LIFT_MIN_FACTOR, altitude_lift_factor)
 
-            ay -= GRAVITY * lift_factor * altitude_lift_factor
+            ay -= BASE_LIFT * lift_factor * altitude_lift_factor * speed_lift_factor
 
         self.vx += ax * dt
         self.vy += ay * dt
@@ -2164,7 +2193,7 @@ async def main():
         save_player_stats(player_stats)
 
     # Plane 1 (WASD) — left side
-    spawn_margin = 180
+    spawn_margin = 50
     plane1_sprite = build_biplane_sprite((210, 70, 55), (245, 215, 120))
     plane2_sprite = build_biplane_sprite((60, 90, 190), (225, 235, 245))
     plane1 = Plane(spawn_margin, HEIGHT - GROUND_HEIGHT, math.radians(-30), plane1_sprite, (255, 245, 80))
@@ -2200,27 +2229,27 @@ async def main():
         while accumulator >= DT and running:
             dt = DT
 
-            # Plane 1 controls (WASD + F to fire)
+            # Plane 1 controls (W/S throttle, A/D turn, F fire)
             if keys[pygame.K_w]:
-                plane1.angle -= 2.5 * dt
-            if keys[pygame.K_s]:
-                plane1.angle += 2.5 * dt
-            if keys[pygame.K_d]:
                 plane1.thrust_level = min(1.0, plane1.thrust_level + THROTTLE_RAMP_RATE * dt)
-            if keys[pygame.K_a]:
+            if keys[pygame.K_s]:
                 plane1.thrust_level = max(0.0, plane1.thrust_level - THROTTLE_RAMP_RATE * dt)
+            if keys[pygame.K_a]:
+                plane1.angle -= plane1.turn_rate * dt
+            if keys[pygame.K_d]:
+                plane1.angle += plane1.turn_rate * dt
             if keys[pygame.K_f] and not plane1_fire_was_down:
                 plane1.fire()
 
-            # Plane 2 controls (Arrows + Ctrl or / to fire)
+            # Plane 2 controls (Up/Down throttle, Left/Right turn, Ctrl or / fire)
             if keys[pygame.K_UP]:
-                plane2.angle -= 2.5 * dt
-            if keys[pygame.K_DOWN]:
-                plane2.angle += 2.5 * dt
-            if keys[pygame.K_RIGHT]:
                 plane2.thrust_level = min(1.0, plane2.thrust_level + THROTTLE_RAMP_RATE * dt)
-            if keys[pygame.K_LEFT]:
+            if keys[pygame.K_DOWN]:
                 plane2.thrust_level = max(0.0, plane2.thrust_level - THROTTLE_RAMP_RATE * dt)
+            if keys[pygame.K_LEFT]:
+                plane2.angle -= plane2.turn_rate * dt
+            if keys[pygame.K_RIGHT]:
+                plane2.angle += plane2.turn_rate * dt
             if plane2_fire_pressed(keys) and not plane2_fire_was_down:
                 plane2.fire()
 
