@@ -93,6 +93,8 @@ IS_WEB = sys.platform in ("emscripten", "wasi") or browser_window is not None
 UI_FONT_NAME = "arial" if IS_WEB else "consolas"
 WEB_RUNTIME_CONFIG = None
 WEB_SCORE_STATUS_MESSAGE = ""
+WEB_AUDIO_BUFFER_SIZE = 4096 if IS_WEB else 512
+ENGINE_AUDIO_CHECK_INTERVAL = 0.08 if IS_WEB else 0.0
 AUDIO_SEARCH_DIRS = (
     os.path.join(os.path.dirname(__file__), "audio"),
     os.path.join(os.path.dirname(__file__), "assets", "audio"),
@@ -103,7 +105,7 @@ PLANE_LENGTH = 32
 PLANE_WIDTH = 16
 
 try:
-    pygame.mixer.pre_init(44100, -16, 2, 512)
+    pygame.mixer.pre_init(44100, -16, 2, WEB_AUDIO_BUFFER_SIZE)
 except Exception:
     pass
 
@@ -121,6 +123,10 @@ font = pygame.font.SysFont(UI_FONT_NAME, 22 if IS_WEB else 20)
 title_font = pygame.font.SysFont(UI_FONT_NAME, 50 if IS_WEB else 40, bold=True)
 subtitle_font = pygame.font.SysFont(UI_FONT_NAME, 32 if IS_WEB else 28, bold=True)
 small_font = pygame.font.SysFont(UI_FONT_NAME, 22 if IS_WEB else 18)
+TEXT_SURFACE_CACHE = {}
+STATIC_TEXT_SURFACE_CACHE = {}
+STORM_ALPHA_CACHE = {}
+LIGHTNING_GLOW_SURFACE = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
 CURRENT_MUSIC_FILENAME = None
 MUSIC_ENABLED = True
 SOUND_EFFECTS_ENABLED = True
@@ -232,18 +238,70 @@ def create_reserved_audio_channels(count):
         return []
 
 
+def get_text_surface(text_font, text, color):
+    cache_key = (id(text_font), text, color)
+    cached_surface = TEXT_SURFACE_CACHE.get(cache_key)
+    if cached_surface is None:
+        cached_surface = text_font.render(text, True, color)
+        TEXT_SURFACE_CACHE[cache_key] = cached_surface
+    return cached_surface
+
+
+def get_static_text_surface(text_font, text, color):
+    cache_key = (id(text_font), text, color)
+    cached_surface = STATIC_TEXT_SURFACE_CACHE.get(cache_key)
+    if cached_surface is None:
+        cached_surface = text_font.render(text, True, color)
+        STATIC_TEXT_SURFACE_CACHE[cache_key] = cached_surface
+    return cached_surface
+
+
+def get_alpha_variant(surface, alpha):
+    clamped_alpha = max(0, min(255, int(alpha)))
+    cache_key = (id(surface), clamped_alpha)
+    cached_surface = STORM_ALPHA_CACHE.get(cache_key)
+    if cached_surface is None:
+        cached_surface = surface.copy()
+        cached_surface.set_alpha(clamped_alpha)
+        STORM_ALPHA_CACHE[cache_key] = cached_surface
+    return cached_surface
+
+
 def update_looping_channel(channel, sound, enabled, volume):
     if channel is None:
         return
 
+    current_time = pygame.time.get_ticks() / 1000.0
+    channel_state = getattr(channel, "_loop_state", None)
+    if channel_state is None:
+        channel_state = {
+            "last_busy_check": -ENGINE_AUDIO_CHECK_INTERVAL,
+            "is_playing": False,
+        }
+        setattr(channel, "_loop_state", channel_state)
+
     if not SOUND_EFFECTS_ENABLED or not enabled or isinstance(sound, SilentSound):
-        if channel.get_busy():
-            channel.stop()
+        if channel_state["is_playing"]:
+            try:
+                channel.stop()
+            except Exception:
+                pass
+            channel_state["is_playing"] = False
         return
 
     try:
-        if not channel.get_busy():
+        should_check_busy = (
+            ENGINE_AUDIO_CHECK_INTERVAL <= 0.0
+            or (current_time - channel_state["last_busy_check"]) >= ENGINE_AUDIO_CHECK_INTERVAL
+        )
+        if should_check_busy:
+            channel_state["is_playing"] = channel.get_busy()
+            channel_state["last_busy_check"] = current_time
+
+        if not channel_state["is_playing"]:
             channel.play(sound, loops=-1)
+            channel_state["is_playing"] = True
+            channel_state["last_busy_check"] = current_time
         channel.set_volume(volume)
     except Exception:
         pass
@@ -978,7 +1036,7 @@ def plane2_fire_pressed(keys):
 
 
 def draw_text_centered(surface, text, text_font, color, center_x, top_y):
-    image = text_font.render(text, True, color)
+    image = get_text_surface(text_font, text, color)
     rect = image.get_rect(midtop=(center_x, top_y))
     surface.blit(image, rect)
     return rect
@@ -989,7 +1047,7 @@ def draw_web_score_status(surface, center_x, top_y, color=(70, 88, 116)):
     if not status_message:
         return top_y
 
-    status_image = small_font.render(status_message[:140], True, color)
+    status_image = get_text_surface(small_font, status_message[:140], color)
     status_rect = status_image.get_rect(midtop=(center_x, top_y))
     surface.blit(status_image, status_rect)
     return status_rect.bottom
@@ -1029,7 +1087,7 @@ async def show_fatal_error_screen(error):
         for line in rendered_lines[1:]:
             if not line:
                 continue
-            line_image = small_font.render(line[:110], True, (38, 48, 68))
+            line_image = get_text_surface(small_font, line[:110], (38, 48, 68))
             screen.blit(line_image, (panel_rect.x + 20, y))
             y += line_image.get_height() + 12
 
@@ -1477,8 +1535,7 @@ def draw_storm_cloud(surface, storm_cloud, fade_progress=1.0):
     if fade_progress <= 0.0:
         return
 
-    sprite = storm_cloud["sprite"].copy()
-    sprite.set_alpha(int(255 * fade_progress))
+    sprite = get_alpha_variant(storm_cloud["sprite"], 255 * fade_progress)
     surface.blit(sprite, (int(storm_cloud["x"]), int(storm_cloud["y"])))
 
     if not storm_cloud["lightning_points"]:
@@ -1488,7 +1545,8 @@ def draw_storm_cloud(surface, storm_cloud, fade_progress=1.0):
         return
 
     glow_points = [(int(x), int(y)) for x, y in storm_cloud["lightning_points"]]
-    glow_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    glow_surface = LIGHTNING_GLOW_SURFACE
+    glow_surface.fill((0, 0, 0, 0))
     glow_alpha = int(255 * fade_progress)
     pygame.draw.lines(glow_surface, (255, 255, 210, glow_alpha), False, glow_points, 8)
     pygame.draw.lines(glow_surface, (255, 248, 170, glow_alpha), False, glow_points, 4)
@@ -2068,7 +2126,7 @@ def draw_hud_left(surface, plane):
         f"Thrust: {plane.thrust_level*100:5.1f}%"
     ]
     for i, t in enumerate(texts):
-        img = font.render(t, True, (255, 255, 255))
+        img = get_text_surface(font, t, (255, 255, 255))
         surface.blit(img, (10, 10 + i * 22))
 
 
@@ -2078,7 +2136,7 @@ def draw_hud_right(surface, plane):
         f"Thrust: {plane.thrust_level*100:5.1f}%"
     ]
     for i, t in enumerate(texts):
-        img = font.render(t, True, (255, 255, 255))
+        img = get_text_surface(font, t, (255, 255, 255))
         surface.blit(img, (WIDTH - 220, 10 + i * 22))
 
 
@@ -2395,18 +2453,18 @@ async def main():
         draw_hud_left(screen, plane1)
         draw_hud_right(screen, plane2)
 
-        left_name = font.render(player_stats[player1_key]["name"], True, (255, 255, 255))
-        right_name = font.render(player_stats[player2_key]["name"], True, (255, 255, 255))
+        left_name = get_static_text_surface(font, player_stats[player1_key]["name"], (255, 255, 255))
+        right_name = get_static_text_surface(font, player_stats[player2_key]["name"], (255, 255, 255))
 
-        score_text = font.render(f"{score1}   SCORE   {score2}", True, (255, 255, 255))
+        score_text = get_text_surface(font, f"{score1}   SCORE   {score2}", (255, 255, 255))
         score_rect = score_text.get_rect(midtop=(WIDTH // 2, 10))
         left_name_rect = left_name.get_rect(midright=(score_rect.left - 20, score_rect.top))
         right_name_rect = right_name.get_rect(midleft=(score_rect.right + 20, score_rect.top))
         screen.blit(left_name, left_name_rect)
         screen.blit(score_text, score_rect)
         screen.blit(right_name, right_name_rect)
-        target_text = small_font.render(f"First to {MATCH_WIN_SCORE}", True, (255, 255, 255))
-        stage_text = small_font.render(f"Weather: {weather_stage.title()}", True, (255, 255, 255))
+        target_text = get_static_text_surface(small_font, f"First to {MATCH_WIN_SCORE}", (255, 255, 255))
+        stage_text = get_text_surface(small_font, f"Weather: {weather_stage.title()}", (255, 255, 255))
         screen.blit(target_text, (WIDTH // 2 - target_text.get_width() // 2, 38))
         screen.blit(stage_text, (WIDTH // 2 - stage_text.get_width() // 2, 60))
 

@@ -1,7 +1,7 @@
 $python = "C:/Users/conor/AppData/Local/Programs/Python/Python312/python.exe"
 
 Set-Location -LiteralPath $PSScriptRoot
-$source = Join-Path $PSScriptRoot "..\Flight Game 3 V4.py"
+$source = Join-Path $PSScriptRoot "..\Flight Game 3 V5.py"
 $appDir = Join-Path $PSScriptRoot "flight-game-v3"
 $destination = Join-Path $appDir "main.py"
 $audioSource = Join-Path $PSScriptRoot "..\assets\audio"

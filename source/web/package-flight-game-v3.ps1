@@ -16,7 +16,7 @@ if (Test-Path $audioSource) {
     Copy-Item -Path (Join-Path $audioSource "*") -Destination $audioDestination -Recurse -Force
 }
 & $python -m pip install pygbag --user --upgrade
-& $python -m pygbag flight-game-v3
+& $python -m pygbag --build flight-game-v3
 
 if (Test-Path $zipPath) {
     Remove-Item -LiteralPath $zipPath -Force
