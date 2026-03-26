@@ -17,6 +17,7 @@ if (Test-Path $audioSource) {
 }
 & $python -m pip install pygbag --user --upgrade
 & $python -m pygbag --build flight-game-v3
+& $python (Join-Path $PSScriptRoot "repack-flight-game-v3.py") $appDir $buildDir
 
 if (Test-Path $zipPath) {
     Remove-Item -LiteralPath $zipPath -Force

@@ -6,6 +6,7 @@ $appDir = Join-Path $PSScriptRoot "flight-game-v3"
 $destination = Join-Path $appDir "main.py"
 $audioSource = Join-Path $PSScriptRoot "..\assets\audio"
 $audioDestination = Join-Path $appDir "audio"
+$buildDir = Join-Path $appDir "build\web"
 
 New-Item -ItemType Directory -Path $appDir -Force | Out-Null
 Copy-Item -LiteralPath $source -Destination $destination -Force
@@ -15,3 +16,4 @@ if (Test-Path $audioSource) {
 }
 & $python -m pip install pygbag --user --upgrade
 & $python -m pygbag flight-game-v3
+& $python (Join-Path $PSScriptRoot "repack-flight-game-v3.py") $appDir $buildDir
