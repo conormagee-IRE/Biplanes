@@ -127,6 +127,7 @@ TEXT_SURFACE_CACHE = {}
 STATIC_TEXT_SURFACE_CACHE = {}
 STORM_ALPHA_CACHE = {}
 LIGHTNING_GLOW_SURFACE = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+CHANNEL_LOOP_STATES = {}
 CURRENT_MUSIC_FILENAME = None
 MUSIC_ENABLED = True
 SOUND_EFFECTS_ENABLED = True
@@ -267,18 +268,24 @@ def get_alpha_variant(surface, alpha):
     return cached_surface
 
 
-def update_looping_channel(channel, sound, enabled, volume):
-    if channel is None:
-        return
-
-    current_time = pygame.time.get_ticks() / 1000.0
-    channel_state = getattr(channel, "_loop_state", None)
+def get_channel_loop_state(channel):
+    channel_key = id(channel)
+    channel_state = CHANNEL_LOOP_STATES.get(channel_key)
     if channel_state is None:
         channel_state = {
             "last_busy_check": -ENGINE_AUDIO_CHECK_INTERVAL,
             "is_playing": False,
         }
-        setattr(channel, "_loop_state", channel_state)
+        CHANNEL_LOOP_STATES[channel_key] = channel_state
+    return channel_key, channel_state
+
+
+def update_looping_channel(channel, sound, enabled, volume):
+    if channel is None:
+        return
+
+    current_time = pygame.time.get_ticks() / 1000.0
+    _, channel_state = get_channel_loop_state(channel)
 
     if not SOUND_EFFECTS_ENABLED or not enabled or isinstance(sound, SilentSound):
         if channel_state["is_playing"]:
@@ -311,10 +318,14 @@ def stop_audio_channels(channels):
     for channel in channels:
         if channel is None:
             continue
+        channel_key, channel_state = get_channel_loop_state(channel)
         try:
             channel.stop()
         except Exception:
             pass
+        channel_state["is_playing"] = False
+        channel_state["last_busy_check"] = -ENGINE_AUDIO_CHECK_INTERVAL
+        CHANNEL_LOOP_STATES.pop(channel_key, None)
 
 
 def handle_audio_toggle_key(event, music_filename=None, music_volume=0.25):
