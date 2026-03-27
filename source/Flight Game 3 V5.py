@@ -1053,15 +1053,18 @@ def draw_text_centered(surface, text, text_font, color, center_x, top_y):
     return rect
 
 
-def draw_web_score_status(surface, center_x, top_y, color=(70, 88, 116)):
+def draw_web_score_status(surface, center_x, top_y=None, color=(70, 88, 116), bottom_y=None):
     status_message = get_web_score_status()
     if not status_message:
-        return top_y
+        return bottom_y if bottom_y is not None else top_y
 
     status_image = get_text_surface(small_font, status_message[:140], color)
-    status_rect = status_image.get_rect(midtop=(center_x, top_y))
+    if bottom_y is not None:
+        status_rect = status_image.get_rect(midbottom=(center_x, bottom_y))
+    else:
+        status_rect = status_image.get_rect(midtop=(center_x, top_y))
     surface.blit(status_image, status_rect)
-    return status_rect.bottom
+    return status_rect.top if bottom_y is not None else status_rect.bottom
 
 
 def draw_rect_compat(surface, color, rect, width=0, border_radius=0):
@@ -1395,7 +1398,7 @@ async def show_top_scores_screen(player_stats, winner_name):
         draw_rect_compat(screen, (24, 96, 54), rematch_button, border_radius=12)
         draw_rect_compat(screen, (18, 64, 38), rematch_button, width=3, border_radius=12)
         draw_text_centered(screen, "Rematch", subtitle_font, (244, 248, 244), rematch_button.centerx, rematch_button.y + 9)
-        draw_web_score_status(screen, WIDTH // 2, menu_button.y - 82)
+        draw_web_score_status(screen, WIDTH // 2, color=(70, 88, 116), bottom_y=HEIGHT - 18)
 
         pygame.display.flip()
         start_background_music("menu.ogg", 0.3)
