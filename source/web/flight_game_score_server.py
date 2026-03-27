@@ -172,7 +172,6 @@ def get_sorted_top_scores(player_stats):
     return sorted(
         player_stats.values(),
         key=lambda entry: (
-            -(entry["wins"] - entry["losses"]),
             -entry["wins"],
             entry["losses"],
             entry["name"].casefold(),

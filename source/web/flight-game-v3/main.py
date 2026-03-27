@@ -1038,7 +1038,7 @@ def ensure_player_profile(player_stats, name):
 def get_sorted_top_scores(player_stats):
     return sorted(
         player_stats.values(),
-        key=lambda entry: (-get_player_net_score(entry), -entry["wins"], entry["losses"], entry["name"].casefold()),
+        key=lambda entry: (-entry["wins"], entry["losses"], entry["name"].casefold()),
     )
 
 
@@ -1303,13 +1303,14 @@ async def prompt_for_player_names(player_stats):
 
 
 async def show_top_scores_screen(player_stats, winner_name):
-    continue_button = pygame.Rect(WIDTH // 2 - 120, HEIGHT - 110, 240, 54)
+    menu_button = pygame.Rect(WIDTH // 2 - 250, HEIGHT - 110, 220, 54)
+    rematch_button = pygame.Rect(WIDTH // 2 + 30, HEIGHT - 110, 220, 54)
     leaderboard = get_sorted_top_scores(player_stats)
     row_height = 38
     header_y = 196
     header_height = 32
     top_margin = header_y + header_height + 18
-    bottom_limit = continue_button.y - 26
+    bottom_limit = menu_button.y - 26
     rows_per_page = max(1, (bottom_limit - top_margin) // row_height)
     scroll_offset = 0
     stop_audio_channels(ENGINE_CHANNELS)
@@ -1318,21 +1319,26 @@ async def show_top_scores_screen(player_stats, winner_name):
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                return False
+                return "quit"
             if handle_audio_toggle_key(event, "menu.ogg", 0.3):
                 continue
             if event.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN, pygame.MOUSEWHEEL):
                 start_background_music("menu.ogg", 0.3)
             if event.type == pygame.KEYDOWN and event.key in (pygame.K_RETURN, pygame.K_SPACE):
-                return True
+                return "rematch"
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                return "menu"
             if event.type == pygame.KEYDOWN and event.key in (pygame.K_DOWN, pygame.K_PAGEDOWN):
                 scroll_offset = min(max(0, len(leaderboard) - rows_per_page), scroll_offset + 1)
             if event.type == pygame.KEYDOWN and event.key in (pygame.K_UP, pygame.K_PAGEUP):
                 scroll_offset = max(0, scroll_offset - 1)
             if event.type == pygame.MOUSEWHEEL:
                 scroll_offset = max(0, min(max(0, len(leaderboard) - rows_per_page), scroll_offset - event.y))
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and continue_button.collidepoint(event.pos):
-                return True
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if menu_button.collidepoint(event.pos):
+                    return "menu"
+                if rematch_button.collidepoint(event.pos):
+                    return "rematch"
 
         screen.fill((34, 54, 94))
         panel_rect = pygame.Rect(190, 56, WIDTH - 380, HEIGHT - 112)
@@ -1373,15 +1379,22 @@ async def show_top_scores_screen(player_stats, winner_name):
                     True,
                     (70, 88, 116),
                 )
-                scroll_rect = scroll_text.get_rect(midtop=(WIDTH // 2, continue_button.y - 56))
+                scroll_rect = scroll_text.get_rect(midtop=(WIDTH // 2, menu_button.y - 56))
                 screen.blit(scroll_text, scroll_rect)
         else:
             draw_text_centered(screen, "No saved scores yet.", font, (52, 64, 82), WIDTH // 2, top_margin)
 
-        draw_rect_compat(screen, (24, 96, 54), continue_button, border_radius=12)
-        draw_rect_compat(screen, (18, 64, 38), continue_button, width=3, border_radius=12)
-        draw_text_centered(screen, "Continue", subtitle_font, (244, 248, 244), continue_button.centerx, continue_button.y + 9)
-        draw_web_score_status(screen, WIDTH // 2, continue_button.y - 82)
+        action_hint = get_text_surface(small_font, "Enter = Rematch  |  Esc = Main Menu", (70, 88, 116))
+        screen.blit(action_hint, (WIDTH // 2 - action_hint.get_width() // 2, menu_button.y - 84))
+
+        draw_rect_compat(screen, (72, 88, 120), menu_button, border_radius=12)
+        draw_rect_compat(screen, (42, 54, 78), menu_button, width=3, border_radius=12)
+        draw_text_centered(screen, "Main Menu", subtitle_font, (244, 248, 244), menu_button.centerx, menu_button.y + 9)
+
+        draw_rect_compat(screen, (24, 96, 54), rematch_button, border_radius=12)
+        draw_rect_compat(screen, (18, 64, 38), rematch_button, width=3, border_radius=12)
+        draw_text_centered(screen, "Rematch", subtitle_font, (244, 248, 244), rematch_button.centerx, rematch_button.y + 9)
+        draw_web_score_status(screen, WIDTH // 2, menu_button.y - 118)
 
         pygame.display.flip()
         start_background_music("menu.ogg", 0.3)
@@ -2250,236 +2263,228 @@ def wind_at_plane(gust, plane):
 # ---------------------------------------------------------
 async def main():
     player_stats = await load_player_stats()
-    player_names = await prompt_for_player_names(player_stats)
-    if player_names is None:
-        pygame.quit()
-        return
+    while True:
+        player_names = await prompt_for_player_names(player_stats)
+        if player_names is None:
+            break
 
-    await register_players_for_match(player_stats, player_names)
-    player1_key = ensure_player_profile(player_stats, player_names[0])
-    player2_key = ensure_player_profile(player_stats, player_names[1])
-    if not IS_WEB:
-        save_player_stats(player_stats)
+        await register_players_for_match(player_stats, player_names)
+        player1_key = ensure_player_profile(player_stats, player_names[0])
+        player2_key = ensure_player_profile(player_stats, player_names[1])
+        if not IS_WEB:
+            save_player_stats(player_stats)
 
-    # Plane 1 (WASD) — left side
-    spawn_margin = 50
-    plane1_sprite = build_biplane_sprite((210, 70, 55), (245, 215, 120))
-    plane2_sprite = build_biplane_sprite((60, 90, 190), (225, 235, 245))
-    plane1 = Plane(spawn_margin, HEIGHT - GROUND_HEIGHT, math.radians(-30), plane1_sprite, (255, 245, 80))
+        spawn_margin = 50
+        plane1_sprite = build_biplane_sprite((210, 70, 55), (245, 215, 120))
+        plane2_sprite = build_biplane_sprite((60, 90, 190), (225, 235, 245))
+        plane1 = Plane(spawn_margin, HEIGHT - GROUND_HEIGHT, math.radians(-30), plane1_sprite, (255, 245, 80))
+        plane2 = Plane(WIDTH - spawn_margin, HEIGHT - GROUND_HEIGHT, math.radians(-150), plane2_sprite, (255, 245, 80))
 
-    # Plane 2 (Arrow Keys) — right side
-    plane2 = Plane(WIDTH - spawn_margin, HEIGHT - GROUND_HEIGHT, math.radians(-150), plane2_sprite, (255, 245, 80))
-
-    score1 = 0
-    score2 = 0
-    plane1_fire_was_down = False
-    plane2_fire_was_down = False
-    building = create_building()
-    weather_state = reset_weather_state()
-    weather_stage = get_weather_stage(weather_state["round_timer"])
-    previous_ticks = pygame.time.get_ticks()
-    accumulator = 0.0
-    start_background_music("theme.ogg", 0.25)
-    stop_audio_channels(ENGINE_CHANNELS)
-
-    running = True
-    while running:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-            elif handle_audio_toggle_key(event, "theme.ogg", 0.25):
-                continue
-
-        frame_time, previous_ticks = await get_frame_time(previous_ticks)
-        accumulator += frame_time * SIMULATION_SPEED
-        keys = pygame.key.get_pressed()
+        score1 = 0
+        score2 = 0
+        plane1_fire_was_down = False
+        plane2_fire_was_down = False
+        building = create_building()
+        weather_state = reset_weather_state()
+        weather_stage = get_weather_stage(weather_state["round_timer"])
+        previous_ticks = pygame.time.get_ticks()
+        accumulator = 0.0
         start_background_music("theme.ogg", 0.25)
+        stop_audio_channels(ENGINE_CHANNELS)
 
-        while accumulator >= DT and running:
-            dt = DT
+        return_to_menu = False
+        running = True
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                elif handle_audio_toggle_key(event, "theme.ogg", 0.25):
+                    continue
 
-            # Plane 1 controls (W/S throttle, A/D turn, F fire)
-            if keys[pygame.K_w]:
-                plane1.thrust_level = min(1.0, plane1.thrust_level + THROTTLE_RAMP_RATE * dt)
-            if keys[pygame.K_s]:
-                plane1.thrust_level = max(0.0, plane1.thrust_level - THROTTLE_RAMP_RATE * dt)
-            if keys[pygame.K_a]:
-                plane1.angle -= plane1.turn_rate * dt
-            if keys[pygame.K_d]:
-                plane1.angle += plane1.turn_rate * dt
-            if keys[pygame.K_f] and not plane1_fire_was_down:
-                plane1.fire()
+            frame_time, previous_ticks = await get_frame_time(previous_ticks)
+            accumulator += frame_time * SIMULATION_SPEED
+            keys = pygame.key.get_pressed()
+            start_background_music("theme.ogg", 0.25)
 
-            # Plane 2 controls (Up/Down throttle, Left/Right turn, Ctrl or / fire)
-            if keys[pygame.K_UP]:
-                plane2.thrust_level = min(1.0, plane2.thrust_level + THROTTLE_RAMP_RATE * dt)
-            if keys[pygame.K_DOWN]:
-                plane2.thrust_level = max(0.0, plane2.thrust_level - THROTTLE_RAMP_RATE * dt)
-            if keys[pygame.K_LEFT]:
-                plane2.angle -= plane2.turn_rate * dt
-            if keys[pygame.K_RIGHT]:
-                plane2.angle += plane2.turn_rate * dt
-            if plane2_fire_pressed(keys) and not plane2_fire_was_down:
-                plane2.fire()
+            while accumulator >= DT and running:
+                dt = DT
 
-            plane1_fire_was_down = keys[pygame.K_f]
-            plane2_fire_was_down = plane2_fire_pressed(keys)
+                if keys[pygame.K_w]:
+                    plane1.thrust_level = min(1.0, plane1.thrust_level + THROTTLE_RAMP_RATE * dt)
+                if keys[pygame.K_s]:
+                    plane1.thrust_level = max(0.0, plane1.thrust_level - THROTTLE_RAMP_RATE * dt)
+                if keys[pygame.K_a]:
+                    plane1.angle -= plane1.turn_rate * dt
+                if keys[pygame.K_d]:
+                    plane1.angle += plane1.turn_rate * dt
+                if keys[pygame.K_f] and not plane1_fire_was_down:
+                    plane1.fire()
 
-            update_looping_channel(
-                ENGINE_CHANNELS[0] if len(ENGINE_CHANNELS) > 0 else None,
-                ENGINE_SOUND,
-                plane1.thrust_level > 0.0,
-                max(0.06, min(0.275, plane1.thrust_level * 0.275)),
-            )
-            update_looping_channel(
-                ENGINE_CHANNELS[1] if len(ENGINE_CHANNELS) > 1 else None,
-                ENGINE_SOUND,
-                plane2.thrust_level > 0.0,
-                max(0.06, min(0.275, plane2.thrust_level * 0.275)),
-            )
+                if keys[pygame.K_UP]:
+                    plane2.thrust_level = min(1.0, plane2.thrust_level + THROTTLE_RAMP_RATE * dt)
+                if keys[pygame.K_DOWN]:
+                    plane2.thrust_level = max(0.0, plane2.thrust_level - THROTTLE_RAMP_RATE * dt)
+                if keys[pygame.K_LEFT]:
+                    plane2.angle -= plane2.turn_rate * dt
+                if keys[pygame.K_RIGHT]:
+                    plane2.angle += plane2.turn_rate * dt
+                if plane2_fire_pressed(keys) and not plane2_fire_was_down:
+                    plane2.fire()
 
-            weather_stage = update_weather(weather_state, dt)
-            active_wind_gust = get_active_wind(weather_state, weather_stage)
+                plane1_fire_was_down = keys[pygame.K_f]
+                plane2_fire_was_down = plane2_fire_pressed(keys)
 
-            plane1_wind = wind_at_plane(active_wind_gust, plane1)
-            plane2_wind = wind_at_plane(active_wind_gust, plane2)
+                update_looping_channel(
+                    ENGINE_CHANNELS[0] if len(ENGINE_CHANNELS) > 0 else None,
+                    ENGINE_SOUND,
+                    plane1.thrust_level > 0.0,
+                    max(0.06, min(0.275, plane1.thrust_level * 0.275)),
+                )
+                update_looping_channel(
+                    ENGINE_CHANNELS[1] if len(ENGINE_CHANNELS) > 1 else None,
+                    ENGINE_SOUND,
+                    plane2.thrust_level > 0.0,
+                    max(0.06, min(0.275, plane2.thrust_level * 0.275)),
+                )
 
-            plane1_crashed = plane1.update(dt, plane1_wind, active_wind_gust)
-            plane2_crashed = plane2.update(dt, plane2_wind, active_wind_gust)
-            round_point_1 = 0
-            round_point_2 = 0
+                weather_stage = update_weather(weather_state, dt)
+                active_wind_gust = get_active_wind(weather_state, weather_stage)
+                plane1_wind = wind_at_plane(active_wind_gust, plane1)
+                plane2_wind = wind_at_plane(active_wind_gust, plane2)
 
-            if not plane1_crashed and plane_hits_building(plane1, building):
-                plane1.crash()
-                plane1_crashed = True
+                plane1_crashed = plane1.update(dt, plane1_wind, active_wind_gust)
+                plane2_crashed = plane2.update(dt, plane2_wind, active_wind_gust)
+                round_point_1 = 0
+                round_point_2 = 0
 
-            if not plane2_crashed and plane_hits_building(plane2, building):
-                plane2.crash()
-                plane2_crashed = True
-
-            if plane1_crashed:
-                round_point_2 += 1
-            if plane2_crashed:
-                round_point_1 += 1
-
-            if weather_stage in ("storm", "wind"):
-                if any(lightning_hits_plane(storm_cloud, plane1) for storm_cloud in weather_state["storm_clouds"]):
-                    if not plane1_crashed:
-                        round_point_2 += 1
+                if not plane1_crashed and plane_hits_building(plane1, building):
                     plane1.crash()
                     plane1_crashed = True
-
-                if any(lightning_hits_plane(storm_cloud, plane2) for storm_cloud in weather_state["storm_clouds"]):
-                    if not plane2_crashed:
-                        round_point_1 += 1
+                if not plane2_crashed and plane_hits_building(plane2, building):
                     plane2.crash()
                     plane2_crashed = True
 
-            # --- Bullet hits (ignore grounded planes) ---
-            hit_index = None
-            if not plane_on_ground(plane2):
-                hit_index = get_hit_bullet_index(plane1.bullets, plane2)
-            if hit_index is not None:
-                round_point_1 += 1
-                del plane1.bullets[hit_index]
-                play_sound_effect(HIT_SOUND)
-                plane2.reset()
+                if plane1_crashed:
+                    round_point_2 += 1
+                if plane2_crashed:
+                    round_point_1 += 1
 
-            hit_index = None
-            if not plane_on_ground(plane1):
-                hit_index = get_hit_bullet_index(plane1.bullets, plane1)
-            if hit_index is not None:
-                round_point_2 += 1
-                del plane1.bullets[hit_index]
-                play_sound_effect(HIT_SOUND)
-                plane1.reset()
+                if weather_stage in ("storm", "wind"):
+                    if any(lightning_hits_plane(storm_cloud, plane1) for storm_cloud in weather_state["storm_clouds"]):
+                        if not plane1_crashed:
+                            round_point_2 += 1
+                        plane1.crash()
+                        plane1_crashed = True
+                    if any(lightning_hits_plane(storm_cloud, plane2) for storm_cloud in weather_state["storm_clouds"]):
+                        if not plane2_crashed:
+                            round_point_1 += 1
+                        plane2.crash()
+                        plane2_crashed = True
 
-            hit_index = None
-            if not plane_on_ground(plane1):
-                hit_index = get_hit_bullet_index(plane2.bullets, plane1)
-            if hit_index is not None:
-                round_point_2 += 1
-                del plane2.bullets[hit_index]
-                play_sound_effect(HIT_SOUND)
-                plane1.reset()
+                hit_index = None
+                if not plane_on_ground(plane2):
+                    hit_index = get_hit_bullet_index(plane1.bullets, plane2)
+                if hit_index is not None:
+                    round_point_1 += 1
+                    del plane1.bullets[hit_index]
+                    play_sound_effect(HIT_SOUND)
+                    plane2.reset()
 
-            hit_index = None
-            if not plane_on_ground(plane2):
-                hit_index = get_hit_bullet_index(plane2.bullets, plane2)
-            if hit_index is not None:
-                round_point_1 += 1
-                del plane2.bullets[hit_index]
-                play_sound_effect(HIT_SOUND)
-                plane2.reset()
+                hit_index = None
+                if not plane_on_ground(plane1):
+                    hit_index = get_hit_bullet_index(plane1.bullets, plane1)
+                if hit_index is not None:
+                    round_point_2 += 1
+                    del plane1.bullets[hit_index]
+                    play_sound_effect(HIT_SOUND)
+                    plane1.reset()
 
-            # --- Plane-plane collisions (ignore grounded planes) ---
-            if planes_collide(plane1, plane2):
-                if not plane_on_ground(plane1) and not plane_on_ground(plane2):
-                    play_sound_effect(CRASH_SOUND)
-                    if plane1.forward_speed < plane2.forward_speed:
-                        plane1.reset()
-                        round_point_2 += 1
-                    else:
-                        plane2.reset()
-                        round_point_1 += 1
+                hit_index = None
+                if not plane_on_ground(plane1):
+                    hit_index = get_hit_bullet_index(plane2.bullets, plane1)
+                if hit_index is not None:
+                    round_point_2 += 1
+                    del plane2.bullets[hit_index]
+                    play_sound_effect(HIT_SOUND)
+                    plane1.reset()
 
-            if round_point_1 or round_point_2:
-                score1 += round_point_1
-                score2 += round_point_2
+                hit_index = None
+                if not plane_on_ground(plane2):
+                    hit_index = get_hit_bullet_index(plane2.bullets, plane2)
+                if hit_index is not None:
+                    round_point_1 += 1
+                    del plane2.bullets[hit_index]
+                    play_sound_effect(HIT_SOUND)
+                    plane2.reset()
 
-            if score1 >= MATCH_WIN_SCORE or score2 >= MATCH_WIN_SCORE:
-                winner_key = player1_key if score1 >= MATCH_WIN_SCORE else player2_key
-                loser_key = player2_key if winner_key == player1_key else player1_key
-                winner_name = player_stats[winner_key]["name"]
-                await record_match_result(player_stats, winner_key, loser_key)
-                winner_name = player_stats[winner_key]["name"]
-                stop_audio_channels(ENGINE_CHANNELS)
+                if planes_collide(plane1, plane2):
+                    if not plane_on_ground(plane1) and not plane_on_ground(plane2):
+                        play_sound_effect(CRASH_SOUND)
+                        if plane1.forward_speed < plane2.forward_speed:
+                            plane1.reset()
+                            round_point_2 += 1
+                        else:
+                            plane2.reset()
+                            round_point_1 += 1
 
-                if not await show_top_scores_screen(player_stats, winner_name):
-                    running = False
-                    continue
+                if round_point_1 or round_point_2:
+                    score1 += round_point_1
+                    score2 += round_point_2
 
-                score1 = 0
-                score2 = 0
-                plane1_fire_was_down = False
-                plane2_fire_was_down = False
-                weather_state = reset_round_state(plane1, plane2)
-                weather_stage = get_weather_stage(weather_state["round_timer"])
-                start_background_music("theme.ogg", 0.25)
+                if score1 >= MATCH_WIN_SCORE or score2 >= MATCH_WIN_SCORE:
+                    winner_key = player1_key if score1 >= MATCH_WIN_SCORE else player2_key
+                    loser_key = player2_key if winner_key == player1_key else player1_key
+                    winner_name = player_stats[winner_key]["name"]
+                    await record_match_result(player_stats, winner_key, loser_key)
+                    winner_name = player_stats[winner_key]["name"]
+                    stop_audio_channels(ENGINE_CHANNELS)
 
-            accumulator -= DT
+                    post_match_action = await show_top_scores_screen(player_stats, winner_name)
+                    if post_match_action == "quit":
+                        running = False
+                        continue
+                    if post_match_action == "menu":
+                        running = False
+                        return_to_menu = True
+                        continue
 
-        # --- Drawing ---
-        screen.fill((80, 150, 255))
+                    score1 = 0
+                    score2 = 0
+                    plane1_fire_was_down = False
+                    plane2_fire_was_down = False
+                    weather_state = reset_round_state(plane1, plane2)
+                    weather_stage = get_weather_stage(weather_state["round_timer"])
+                    start_background_music("theme.ogg", 0.25)
 
-        pygame.draw.rect(screen, (40, 120, 40),
-                         pygame.Rect(0, HEIGHT - GROUND_HEIGHT, WIDTH, GROUND_HEIGHT))
+                accumulator -= DT
 
-        draw_building(screen, building)
+            screen.fill((80, 150, 255))
+            pygame.draw.rect(screen, (40, 120, 40), pygame.Rect(0, HEIGHT - GROUND_HEIGHT, WIDTH, GROUND_HEIGHT))
+            draw_building(screen, building)
+            plane1.draw(screen)
+            plane2.draw(screen)
+            draw_weather(screen, weather_state, weather_stage)
+            draw_hud_left(screen, plane1)
+            draw_hud_right(screen, plane2)
 
-        plane1.draw(screen)
-        plane2.draw(screen)
-        draw_weather(screen, weather_state, weather_stage)
+            left_name = get_static_text_surface(font, player_stats[player1_key]["name"], (255, 255, 255))
+            right_name = get_static_text_surface(font, player_stats[player2_key]["name"], (255, 255, 255))
+            score_text = get_text_surface(font, f"{score1}   SCORE   {score2}", (255, 255, 255))
+            score_rect = score_text.get_rect(midtop=(WIDTH // 2, 10))
+            left_name_rect = left_name.get_rect(midright=(score_rect.left - 20, score_rect.top))
+            right_name_rect = right_name.get_rect(midleft=(score_rect.right + 20, score_rect.top))
+            screen.blit(left_name, left_name_rect)
+            screen.blit(score_text, score_rect)
+            screen.blit(right_name, right_name_rect)
+            target_text = get_static_text_surface(small_font, f"First to {MATCH_WIN_SCORE}", (255, 255, 255))
+            stage_text = get_text_surface(small_font, f"Weather: {weather_stage.title()}", (255, 255, 255))
+            screen.blit(target_text, (WIDTH // 2 - target_text.get_width() // 2, 38))
+            screen.blit(stage_text, (WIDTH // 2 - stage_text.get_width() // 2, 60))
+            pygame.display.flip()
 
-        draw_hud_left(screen, plane1)
-        draw_hud_right(screen, plane2)
-
-        left_name = get_static_text_surface(font, player_stats[player1_key]["name"], (255, 255, 255))
-        right_name = get_static_text_surface(font, player_stats[player2_key]["name"], (255, 255, 255))
-
-        score_text = get_text_surface(font, f"{score1}   SCORE   {score2}", (255, 255, 255))
-        score_rect = score_text.get_rect(midtop=(WIDTH // 2, 10))
-        left_name_rect = left_name.get_rect(midright=(score_rect.left - 20, score_rect.top))
-        right_name_rect = right_name.get_rect(midleft=(score_rect.right + 20, score_rect.top))
-        screen.blit(left_name, left_name_rect)
-        screen.blit(score_text, score_rect)
-        screen.blit(right_name, right_name_rect)
-        target_text = get_static_text_surface(small_font, f"First to {MATCH_WIN_SCORE}", (255, 255, 255))
-        stage_text = get_text_surface(small_font, f"Weather: {weather_stage.title()}", (255, 255, 255))
-        screen.blit(target_text, (WIDTH // 2 - target_text.get_width() // 2, 38))
-        screen.blit(stage_text, (WIDTH // 2 - stage_text.get_width() // 2, 60))
-
-        pygame.display.flip()
+        if return_to_menu:
+            continue
+        break
 
     stop_audio_channels(ENGINE_CHANNELS)
     stop_background_music()

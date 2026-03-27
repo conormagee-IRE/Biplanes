@@ -340,7 +340,7 @@
       <div class="toolbar">
         <div class="stack">
           <h2>Leaderboard</h2>
-          <p>Sorted by net score: wins minus losses. Click a row to load that player into the form.</p>
+          <p>Sorted by wins first, then by fewest losses among tied players. Click a row to load that player into the form.</p>
         </div>
       </div>
 
@@ -404,7 +404,6 @@
         const aEntry = a[1];
         const bEntry = b[1];
         return (
-          getNet(bEntry) - getNet(aEntry) ||
           bEntry.wins - aEntry.wins ||
           aEntry.losses - bEntry.losses ||
           aEntry.name.localeCompare(bEntry.name)

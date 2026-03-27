@@ -106,7 +106,7 @@ With this setup, admin credentials are sent only over HTTPS to the reverse proxy
 
 - The web build registers every named player when a match starts.
 - Wins and losses only change when a full match finishes and a winner reaches the match win threshold.
-- The leaderboard is ordered by `wins - losses` and displays wins, losses, and net score.
+- The leaderboard is ordered by wins first, then by fewest losses among tied players, and displays wins, losses, and net score.
 - For GitHub Pages, the preferred shared-score setup is a static `flight-game-config.json` plus Supabase.
 - The score server stores data in `web/flight_game_web_scores.json` by default.
 - The admin page can refresh scores, edit or create player records, delete players, and reset the entire scoreboard.
