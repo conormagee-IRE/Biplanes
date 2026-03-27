@@ -1303,14 +1303,16 @@ async def prompt_for_player_names(player_stats):
 
 
 async def show_top_scores_screen(player_stats, winner_name):
-    menu_button = pygame.Rect(WIDTH // 2 - 250, HEIGHT - 110, 220, 54)
-    rematch_button = pygame.Rect(WIDTH // 2 + 30, HEIGHT - 110, 220, 54)
+    panel_rect = pygame.Rect(190, 56, WIDTH - 380, HEIGHT - 112)
+    action_button_y = panel_rect.bottom - 92
+    menu_button = pygame.Rect(WIDTH // 2 - 250, action_button_y, 220, 54)
+    rematch_button = pygame.Rect(WIDTH // 2 + 30, action_button_y, 220, 54)
     leaderboard = get_sorted_top_scores(player_stats)
     row_height = 38
     header_y = 196
     header_height = 32
     top_margin = header_y + header_height + 18
-    bottom_limit = menu_button.y - 26
+    bottom_limit = menu_button.y - 44
     rows_per_page = max(1, (bottom_limit - top_margin) // row_height)
     scroll_offset = 0
     stop_audio_channels(ENGINE_CHANNELS)
@@ -1341,7 +1343,6 @@ async def show_top_scores_screen(player_stats, winner_name):
                     return "rematch"
 
         screen.fill((34, 54, 94))
-        panel_rect = pygame.Rect(190, 56, WIDTH - 380, HEIGHT - 112)
         draw_rect_compat(screen, (240, 242, 247), panel_rect, border_radius=18)
         draw_rect_compat(screen, (18, 30, 54), panel_rect, width=4, border_radius=18)
 
@@ -1379,13 +1380,13 @@ async def show_top_scores_screen(player_stats, winner_name):
                     True,
                     (70, 88, 116),
                 )
-                scroll_rect = scroll_text.get_rect(midtop=(WIDTH // 2, menu_button.y - 56))
+                scroll_rect = scroll_text.get_rect(midtop=(WIDTH // 2, menu_button.y - 72))
                 screen.blit(scroll_text, scroll_rect)
         else:
             draw_text_centered(screen, "No saved scores yet.", font, (52, 64, 82), WIDTH // 2, top_margin)
 
         action_hint = get_text_surface(small_font, "Enter = Rematch  |  Esc = Main Menu", (70, 88, 116))
-        screen.blit(action_hint, (WIDTH // 2 - action_hint.get_width() // 2, menu_button.y - 84))
+        screen.blit(action_hint, (WIDTH // 2 - action_hint.get_width() // 2, menu_button.y - 48))
 
         draw_rect_compat(screen, (72, 88, 120), menu_button, border_radius=12)
         draw_rect_compat(screen, (42, 54, 78), menu_button, width=3, border_radius=12)
@@ -1394,7 +1395,7 @@ async def show_top_scores_screen(player_stats, winner_name):
         draw_rect_compat(screen, (24, 96, 54), rematch_button, border_radius=12)
         draw_rect_compat(screen, (18, 64, 38), rematch_button, width=3, border_radius=12)
         draw_text_centered(screen, "Rematch", subtitle_font, (244, 248, 244), rematch_button.centerx, rematch_button.y + 9)
-        draw_web_score_status(screen, WIDTH // 2, menu_button.y - 118)
+        draw_web_score_status(screen, WIDTH // 2, menu_button.y - 82)
 
         pygame.display.flip()
         start_background_music("menu.ogg", 0.3)
