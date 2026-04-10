@@ -1960,6 +1960,7 @@ class Plane:
         self.thrust_level = 0.0
         self.wind_vx = 0.0
         self.wind_vy = 0.0
+        self._motion_cache = None
 
         self.bullets = []  # [(x, y, vx, vy, age), ...]
 
@@ -1972,38 +1973,96 @@ class Plane:
         self.thrust_level = 0.0
         self.wind_vx = 0.0
         self.wind_vy = 0.0
+        self._motion_cache = None
         self.bullets = []
 
     def crash(self):
         play_sound_effect(CRASH_SOUND)
         self.reset()
 
+    @staticmethod
+    def _wrap_angle(angle):
+        return (angle + math.pi) % (2.0 * math.pi) - math.pi
+
+    def _get_motion_state(self):
+        cache_key = (self.angle, self.vx, self.vy, self.wind_vx, self.wind_vy)
+        cached_state = self._motion_cache
+        if cached_state is not None and cached_state["key"] == cache_key:
+            return cached_state
+
+        forward_x = math.cos(self.angle)
+        forward_y = math.sin(self.angle)
+        air_vx = self.vx - self.wind_vx
+        air_vy = self.vy - self.wind_vy
+        airspeed_sq = air_vx * air_vx + air_vy * air_vy
+
+        if airspeed_sq > 1e-10:
+            airspeed = math.sqrt(airspeed_sq)
+            inv_airspeed = 1.0 / airspeed
+            velocity_dir_x = air_vx * inv_airspeed
+            velocity_dir_y = air_vy * inv_airspeed
+            velocity_angle = math.atan2(air_vy, air_vx)
+            screen_forward_y = -forward_y
+            screen_velocity_y = -velocity_dir_y
+            dot = velocity_dir_x * forward_x + screen_velocity_y * screen_forward_y
+            cross = velocity_dir_x * screen_forward_y - screen_velocity_y * forward_x
+            aoa = math.atan2(cross, dot)
+            if self.vx < 0.0:
+                aoa = -aoa
+        else:
+            airspeed = 0.0
+            velocity_dir_x = forward_x
+            velocity_dir_y = forward_y
+            velocity_angle = self.angle
+            aoa = 0.0
+
+        forward_speed = air_vx * forward_x + air_vy * forward_y
+        lift_dir_x = velocity_dir_y
+        lift_dir_y = -velocity_dir_x
+        if lift_dir_y > 0.0:
+            lift_dir_x = -lift_dir_x
+            lift_dir_y = -lift_dir_y
+
+        motion_state = {
+            "key": cache_key,
+            "forward_x": forward_x,
+            "forward_y": forward_y,
+            "air_vx": air_vx,
+            "air_vy": air_vy,
+            "airspeed": airspeed,
+            "velocity_dir_x": velocity_dir_x,
+            "velocity_dir_y": velocity_dir_y,
+            "velocity_angle": velocity_angle,
+            "forward_speed": forward_speed,
+            "aoa": aoa,
+            "lift_dir_x": lift_dir_x,
+            "lift_dir_y": lift_dir_y,
+        }
+        self._motion_cache = motion_state
+        return motion_state
+
     @property
     def speed(self):
-        air_vx, air_vy = self.air_velocity
-        return math.hypot(air_vx, air_vy)
+        return self._get_motion_state()["airspeed"]
 
     @property
     def forward_vector(self):
-        return math.cos(self.angle), math.sin(self.angle)
+        motion_state = self._get_motion_state()
+        return motion_state["forward_x"], motion_state["forward_y"]
 
     @property
     def velocity_direction(self):
-        air_vx, air_vy = self.air_velocity
-        airspeed = math.hypot(air_vx, air_vy)
-        if airspeed < 1e-5:
-            return 1.0, 0.0
-        return air_vx / airspeed, air_vy / airspeed
+        motion_state = self._get_motion_state()
+        return motion_state["velocity_dir_x"], motion_state["velocity_dir_y"]
 
     @property
     def air_velocity(self):
-        return self.vx - self.wind_vx, self.vy - self.wind_vy
+        motion_state = self._get_motion_state()
+        return motion_state["air_vx"], motion_state["air_vy"]
 
     @property
     def forward_speed(self):
-        fx, fy = self.forward_vector
-        air_vx, air_vy = self.air_velocity
-        return air_vx * fx + air_vy * fy
+        return self._get_motion_state()["forward_speed"]
 
     @property
     def turn_rate(self):
@@ -2013,21 +2072,7 @@ class Plane:
 
     @property
     def angle_of_attack(self):
-        fx_s, fy_s = self.forward_vector
-        vx_s, vy_s = self.velocity_direction
-
-        fx, fy = fx_s, -fy_s
-        vx, vy = vx_s, -vy_s
-
-        dot = vx * fx + vy * fy
-        cross = vx * fy - vy * fx
-
-        aoa = math.atan2(cross, dot)
-
-        if self.vx < 0:
-            aoa = -aoa
-
-        return aoa
+        return self._get_motion_state()["aoa"]
 
     # ---------------------------------------------------------
     # Bullet firing
@@ -2076,59 +2121,55 @@ class Plane:
     # Physics update
     # ---------------------------------------------------------
     def update(self, dt, wind=(0.0, 0.0), gust=None):
-        ax, ay = 0.0, 0.0
         crashed = False
         ground_y = HEIGHT - GROUND_HEIGHT
         was_airborne = self.y < ground_y - 1
         self.wind_vx, self.wind_vy = wind
+        motion_state = self._get_motion_state()
 
-        ay += GRAVITY
-
-        fx, fy = self.forward_vector
+        ax = 0.0
+        ay = GRAVITY
+        fx = motion_state["forward_x"]
+        fy = motion_state["forward_y"]
+        airspeed = motion_state["airspeed"]
+        forward_speed = motion_state["forward_speed"]
+        aoa = motion_state["aoa"]
         thrust_accel = self.thrust_level * MAX_THRUST_ACCEL
 
         altitude_factor = self.y / (HEIGHT - GROUND_HEIGHT)
         altitude_factor = max(0.1, altitude_factor)
-        thrust_accel *= (altitude_factor * 1.5)
+        thrust_accel *= altitude_factor * 1.5
 
         ax += fx * thrust_accel
         vertical_thrust_factor = UPWARD_VERTICAL_THRUST_FACTOR if fy < 0 else DOWNWARD_VERTICAL_THRUST_FACTOR
         ay += fy * thrust_accel * vertical_thrust_factor
 
-        air_vx, air_vy = self.air_velocity
-
-        vx_m, vy_m = air_vx, -air_vy
-        climb_angle = math.atan2(vy_m, vx_m)
-        forward_gravity = GRAVITY * math.sin(climb_angle)
-
-        ax += -fx * forward_gravity
-        ay += -fy * forward_gravity
-
-        if self.speed > 1e-3:
-            drag_dir_x = -air_vx / self.speed
-            drag_dir_y = -air_vy / self.speed
-            aoa = abs(self.angle_of_attack)
-            capped_aoa = min(aoa, AOA_DRAG_THRESHOLD)
-            excess_aoa = max(0.0, aoa - AOA_DRAG_THRESHOLD)
+        if airspeed > 1e-5:
+            velocity_dir_x = motion_state["velocity_dir_x"]
+            velocity_dir_y = motion_state["velocity_dir_y"]
+            aoa_abs = abs(aoa)
+            capped_aoa = min(aoa_abs, AOA_DRAG_THRESHOLD)
+            excess_aoa = max(0.0, aoa_abs - AOA_DRAG_THRESHOLD)
             aoa_drag = AOA_DRAG_FACTOR * capped_aoa
             aoa_drag += AOA_EXCESS_DRAG_FACTOR * excess_aoa
-            drag_mag = DRAG_COEFF * (self.speed ** 2) * (1.0 + aoa_drag)
-            ax += drag_dir_x * drag_mag
-            ay += drag_dir_y * drag_mag
+            drag_mag = DRAG_COEFF * (airspeed * airspeed) * (1.0 + aoa_drag)
+            ax -= velocity_dir_x * drag_mag
+            ay -= velocity_dir_y * drag_mag
 
-        if self.forward_speed > STALL_SPEED:
-            aoa = self.angle_of_attack
+        if forward_speed > STALL_SPEED:
             lift_factor = 1.0 + LIFT_AOA_FACTOR * aoa
             lift_factor = max(LIFT_MIN_FACTOR, min(LIFT_MAX_FACTOR, lift_factor))
 
-            speed_lift_factor = 1.0 + (self.forward_speed - STALL_SPEED) * LIFT_SPEED_GAIN
+            speed_lift_factor = 1.0 + (forward_speed - STALL_SPEED) * LIFT_SPEED_GAIN
             speed_lift_factor = min(LIFT_SPEED_MAX_FACTOR, speed_lift_factor)
 
             altitude_ratio = self.y / (HEIGHT - GROUND_HEIGHT)
             altitude_lift_factor = 1.0 - ALTITUDE_LIFT_DROP * altitude_ratio
             altitude_lift_factor = max(ALTITUDE_LIFT_MIN_FACTOR, altitude_lift_factor)
 
-            ay -= BASE_LIFT * lift_factor * altitude_lift_factor * speed_lift_factor
+            lift_mag = BASE_LIFT * lift_factor * altitude_lift_factor * speed_lift_factor
+            ax += motion_state["lift_dir_x"] * lift_mag
+            ay += motion_state["lift_dir_y"] * lift_mag
 
         self.vx += ax * dt
         self.vy += ay * dt
