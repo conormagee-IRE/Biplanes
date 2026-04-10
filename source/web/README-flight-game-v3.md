@@ -1,11 +1,11 @@
 # Flight Game V3 Web Build
 
-This folder contains a pygbag-ready copy of the current V3 game.
+This folder contains a pygbag-ready copy of the current live web game.
 
 ## Files
 
 - `flight-game-v3/main.py`: browser entrypoint for pygbag
-- `build-flight-game-v3.ps1`: copies the latest `Flight Game 3 V3.py`, installs or upgrades pygbag, then starts a local web build/test server
+- `build-flight-game-v3.ps1`: copies the latest `Flight Game 3 V6.py`, installs or upgrades pygbag, then starts a local web build/test server
 - `package-flight-game-v3.ps1`: rebuilds the current game and creates an upload zip from the generated web output
 - `embed-flight-game-v3.html`: example host page that embeds the published game with an iframe
 - `flight_game_score_server.py`: shared scoreboard API server for the web version
@@ -118,3 +118,4 @@ With this setup, admin credentials are sent only over HTTPS to the reverse proxy
 - Set `FLIGHT_GAME_TRUST_PROXY_HEADERS=1` when the server is behind Caddy or another trusted reverse proxy so audit logs record the real client IP.
 - The browser build uses `asyncio.run(main())` and `await asyncio.sleep(0)` in the loop.
 - The build script is pinned to the installed Python 3.12 interpreter used for this project.
+- The current live publish source is `source/Flight Game 3 V6.py`.
